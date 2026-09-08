@@ -46,4 +46,3 @@ class KeywordRetriever:
             if len(selected) >= limit:
                 break
         return selected or chunks[:1]
-

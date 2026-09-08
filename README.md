@@ -37,4 +37,3 @@ powershell -File tests/validate-mvp-doc.ps1
 ```
 
 详细边界和设计见 [MVP 设计方案](docs/mvp-design.md)。
-

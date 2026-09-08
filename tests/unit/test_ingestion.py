@@ -25,4 +25,3 @@ def test_chunk_pages_keeps_page_and_offsets():
     assert chunks[0]["id"] == "doc:p1:c1"
     assert chunks[-1]["page_number"] == 2
     assert all(chunk["end_offset"] > chunk["start_offset"] for chunk in chunks)
-

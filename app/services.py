@@ -146,4 +146,3 @@ def _validate_citations(text: str, numbers: list[int], evidence: list[dict[str, 
 
 def _event(name: str, payload: dict[str, Any]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-

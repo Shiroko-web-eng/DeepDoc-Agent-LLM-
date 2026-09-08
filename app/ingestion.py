@@ -103,4 +103,3 @@ def _split_large(text: str, start: int, maximum: int, overlap: int) -> list[tupl
             break
         cursor = max(cursor + 1, end - overlap)
     return result
-

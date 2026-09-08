@@ -20,4 +20,3 @@ def test_dockerfile_runs_as_non_root_with_health_ready_application():
     assert "USER appuser" in dockerfile
     assert "uvicorn" in dockerfile
     assert "app.main:app" in dockerfile
-

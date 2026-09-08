@@ -83,4 +83,3 @@ def build_llm(settings: Settings) -> LLMClient:
     if settings.llm_provider == "openai-compatible":
         return OpenAICompatibleLLM(settings)
     raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
-

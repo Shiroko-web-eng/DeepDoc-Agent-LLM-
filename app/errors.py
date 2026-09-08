@@ -13,4 +13,3 @@ class AppError(Exception):
 class NotFoundError(AppError):
     def __init__(self, message: str = "资源不存在"):
         super().__init__("NOT_FOUND", message, 404)
-

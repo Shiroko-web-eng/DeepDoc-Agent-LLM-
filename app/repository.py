@@ -111,4 +111,3 @@ class Repository:
         result = dict(run)
         result["citations"] = [dict(row) for row in citations]
         return result
-
