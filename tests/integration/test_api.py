@@ -112,6 +112,9 @@ def test_invalid_file_and_missing_answer_are_handled(tmp_path):
 def test_health_and_validation_errors(tmp_path):
     app = create_app(make_settings(tmp_path))
     with TestClient(app) as client:
+        root = client.get("/", follow_redirects=False)
+        assert root.status_code == 307
+        assert root.headers["location"] == "/docs"
         assert client.get("/health/live").json() == {"status": "ok"}
         assert client.get("/health/ready").json() == {"status": "ready"}
         response = client.post("/v1/documents/missing/questions", json={"question": ""})

@@ -5,7 +5,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, File, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from app.config import Settings
 from app.db import Database
@@ -101,6 +101,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with database.connect() as connection:
             connection.execute("SELECT 1").fetchone()
         return {"status": "ready"}
+
+    @application.get("/", include_in_schema=False)
+    def root():
+        return RedirectResponse(url="/docs", status_code=307)
 
     return application
 
