@@ -1,0 +1,27 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="DeepDoc Agent" type="PythonConfigurationType" factoryName="Python">
+    <module name="DeepDoc Agent" />
+    <option name="ENV_FILES" value="" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="PARENT_ENVS" value="true" />
+    <envs>
+      <env name="DEEPDOC_ENV" value="development" />
+      <env name="DEEPDOC_DATABASE_PATH" value="data/deepdoc.db" />
+      <env name="DEEPDOC_UPLOAD_DIR" value="data/uploads" />
+      <env name="DEEPDOC_LLM_PROVIDER" value="extractive" />
+      <env name="PYTHONUNBUFFERED" value="1" />
+    </envs>
+    <option name="SDK_HOME" value="" />
+    <option name="SDK_NAME" value="Python 3.13 (DeepDoc Agent)" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="IS_MODULE_SDK" value="true" />
+    <option name="ADD_CONTENT_ROOTS" value="true" />
+    <option name="ADD_SOURCE_ROOTS" value="true" />
+    <option name="MODULE_MODE" value="true" />
+    <option name="MODULE_NAME" value="uvicorn" />
+    <option name="PARAMETERS" value="app.main:app --host 127.0.0.1 --port 8000 --reload" />
+    <option name="SHOW_COMMAND_LINE" value="false" />
+    <option name="EMULATE_TERMINAL" value="false" />
+    <method v="2" />
+  </configuration>
+</component>

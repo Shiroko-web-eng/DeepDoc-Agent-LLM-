@@ -28,6 +28,22 @@ DEEPDOC_LLM_API_KEY=...
 docker compose up --build
 ```
 
+## PyCharm
+
+项目内置两个共享运行配置：
+
+- `DeepDoc Agent`：使用项目 `.venv` 启动 Uvicorn 开发服务器。
+- `All Tests`：使用 pytest 运行全部测试。
+
+首次打开项目时，在 PyCharm Terminal 执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+等待 PyCharm 加载 `.run` 配置后，在右上角选择 `DeepDoc Agent` 并点击运行。访问
+`http://127.0.0.1:8000/` 即可打开 API 文档。
+
 ## 测试
 
 ```powershell
