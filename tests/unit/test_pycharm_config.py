@@ -19,6 +19,7 @@ def option(configuration: ElementTree.Element, name: str) -> str | None:
 
 def test_application_run_configuration_uses_project_sdk_and_uvicorn():
     configuration = load_configuration("DeepDoc Agent.run.xml")
+    assert configuration.get("name") == "DeepDoc Agent Server"
     assert configuration.get("type") == "PythonConfigurationType"
     assert option(configuration, "IS_MODULE_SDK") == "true"
     assert option(configuration, "WORKING_DIRECTORY") == "$PROJECT_DIR$"

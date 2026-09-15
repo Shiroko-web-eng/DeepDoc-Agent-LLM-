@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="DeepDoc Agent" type="PythonConfigurationType" factoryName="Python">
+  <configuration default="false" name="DeepDoc Agent Server" type="PythonConfigurationType" factoryName="Python">
     <module name="DeepDoc Agent" />
     <option name="ENV_FILES" value="" />
     <option name="INTERPRETER_OPTIONS" value="" />
