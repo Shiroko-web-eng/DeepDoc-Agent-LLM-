@@ -23,7 +23,8 @@ def test_application_run_configuration_uses_project_sdk_and_uvicorn():
     assert option(configuration, "IS_MODULE_SDK") == "true"
     assert option(configuration, "WORKING_DIRECTORY") == "$PROJECT_DIR$"
     assert option(configuration, "MODULE_MODE") == "true"
-    assert option(configuration, "MODULE_NAME") == "uvicorn"
+    assert option(configuration, "SCRIPT_NAME") == "uvicorn"
+    assert option(configuration, "MODULE_NAME") is None
     assert option(configuration, "PARAMETERS") == (
         "app.main:app --host 127.0.0.1 --port 8000 --reload"
     )

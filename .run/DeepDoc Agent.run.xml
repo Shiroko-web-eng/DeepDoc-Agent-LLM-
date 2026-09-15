@@ -18,7 +18,7 @@
     <option name="ADD_CONTENT_ROOTS" value="true" />
     <option name="ADD_SOURCE_ROOTS" value="true" />
     <option name="MODULE_MODE" value="true" />
-    <option name="MODULE_NAME" value="uvicorn" />
+    <option name="SCRIPT_NAME" value="uvicorn" />
     <option name="PARAMETERS" value="app.main:app --host 127.0.0.1 --port 8000 --reload" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
