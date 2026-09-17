@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepdoc-agent"
-version = "0.1.0"
-description = "Citation-first document question answering MVP"
+version = "0.2.0"
+description = "Citation-first hybrid RAG document question answering service"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",

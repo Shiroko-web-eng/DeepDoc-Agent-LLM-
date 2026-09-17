@@ -20,3 +20,12 @@ def test_dockerfile_runs_as_non_root_with_health_ready_application():
     assert "USER appuser" in dockerfile
     assert "uvicorn" in dockerfile
     assert "app.main:app" in dockerfile
+
+
+def test_example_environment_contains_hybrid_rag_controls():
+    environment = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "DEEPDOC_EMBEDDING_DIMENSIONS=256" in environment
+    assert "DEEPDOC_DENSE_TOP_K=40" in environment
+    assert "DEEPDOC_SPARSE_TOP_K=40" in environment
+    assert "DEEPDOC_RERANK_TOP_K=12" in environment
+    assert "DEEPDOC_RRF_K=60" in environment

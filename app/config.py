@@ -18,6 +18,12 @@ class Settings:
     llm_api_key: str
     llm_timeout_seconds: float
     log_level: str
+    embedding_dimensions: int = 256
+    dense_top_k: int = 40
+    sparse_top_k: int = 40
+    rerank_top_k: int = 12
+    final_context_chunks: int = 8
+    rrf_k: int = 60
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -33,6 +39,12 @@ class Settings:
             llm_api_key=os.getenv("DEEPDOC_LLM_API_KEY", ""),
             llm_timeout_seconds=float(os.getenv("DEEPDOC_LLM_TIMEOUT_SECONDS", "30")),
             log_level=os.getenv("DEEPDOC_LOG_LEVEL", "INFO"),
+            embedding_dimensions=int(os.getenv("DEEPDOC_EMBEDDING_DIMENSIONS", "256")),
+            dense_top_k=int(os.getenv("DEEPDOC_DENSE_TOP_K", "40")),
+            sparse_top_k=int(os.getenv("DEEPDOC_SPARSE_TOP_K", "40")),
+            rerank_top_k=int(os.getenv("DEEPDOC_RERANK_TOP_K", "12")),
+            final_context_chunks=int(os.getenv("DEEPDOC_FINAL_CONTEXT_CHUNKS", "8")),
+            rrf_k=int(os.getenv("DEEPDOC_RRF_K", "60")),
         )
 
     def ensure_directories(self) -> None:

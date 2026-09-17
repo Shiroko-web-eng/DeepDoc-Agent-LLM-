@@ -24,10 +24,10 @@ class LLMClient(Protocol):
 
 
 class ExtractiveLLM:
-    model_name = "extractive-mvp"
+    model_name = "extractive-rag-v1"
 
     def generate(self, question: str, evidence: list[dict[str, Any]]) -> GeneratedAnswer:
-        if not evidence or evidence[0].get("score", 0) <= 0:
+        if not evidence or evidence[0].get("score", 0) < 0.08:
             return GeneratedAnswer("当前文档无法支持该结论。", [], self.model_name)
         parts = []
         citations = []
@@ -49,7 +49,8 @@ class OpenAICompatibleLLM:
 
     def generate(self, question: str, evidence: list[dict[str, Any]]) -> GeneratedAnswer:
         blocks = "\n\n".join(
-            f"[C{number}] (第 {chunk['page_number']} 页)\n{chunk['text']}"
+            f"[C{number}] ({chunk.get('filename', '文档')}，第 {chunk['page_number']} 页)\n"
+            f"{chunk['text']}"
             for number, chunk in enumerate(evidence, 1)
         )
         prompt = (

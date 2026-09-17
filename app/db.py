@@ -33,6 +33,11 @@ class Database:
         with self.connect() as db:
             db.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS knowledge_bases (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                    active_index_version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS documents (
                     id TEXT PRIMARY KEY, filename TEXT NOT NULL, media_type TEXT NOT NULL,
                     sha256 TEXT NOT NULL UNIQUE, size_bytes INTEGER NOT NULL,
@@ -52,6 +57,25 @@ class Database:
                     FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id, ordinal);
+                CREATE TABLE IF NOT EXISTS knowledge_base_documents (
+                    knowledge_base_id TEXT NOT NULL, document_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(knowledge_base_id, document_id),
+                    FOREIGN KEY(knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                    chunk_id TEXT PRIMARY KEY, model TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL, vector_json TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL, created_at TEXT NOT NULL,
+                    FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS index_jobs (
+                    id TEXT PRIMARY KEY, knowledge_base_id TEXT NOT NULL,
+                    status TEXT NOT NULL, index_version INTEGER,
+                    error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE
+                );
                 CREATE TABLE IF NOT EXISTS qa_runs (
                     id TEXT PRIMARY KEY, document_id TEXT NOT NULL, question TEXT NOT NULL,
                     answer TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, model TEXT NOT NULL,
@@ -67,3 +91,27 @@ class Database:
                 );
                 """
             )
+            self._ensure_column(db, "qa_runs", "knowledge_base_id", "TEXT")
+            self._ensure_column(db, "qa_runs", "retrieval_trace", "TEXT NOT NULL DEFAULT '{}'")
+            now = utc_now()
+            db.execute(
+                """INSERT OR IGNORE INTO knowledge_bases
+                (id, name, description, active_index_version, created_at, updated_at)
+                VALUES ('default', '默认知识库', 'MVP 兼容知识库', 1, ?, ?)""",
+                (now, now),
+            )
+            db.execute(
+                """INSERT OR IGNORE INTO knowledge_base_documents
+                (knowledge_base_id, document_id, created_at)
+                SELECT 'default', id, ? FROM documents""",
+                (now,),
+            )
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str,
+                       column: str, definition: str) -> None:
+        columns = {
+            row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")

@@ -1,1 +1,1 @@
-"""DeepDoc Agent MVP."""
+"""DeepDoc Agent hybrid RAG service."""
