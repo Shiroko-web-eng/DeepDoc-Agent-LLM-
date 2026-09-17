@@ -89,6 +89,41 @@ class Database:
                     chunk_id TEXT NOT NULL, page_number INTEGER NOT NULL, quote TEXT NOT NULL,
                     FOREIGN KEY(run_id) REFERENCES qa_runs(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS agent_runs (
+                    id TEXT PRIMARY KEY, question TEXT NOT NULL,
+                    knowledge_base_ids TEXT NOT NULL, allow_web_search INTEGER NOT NULL DEFAULT 0,
+                    output_format TEXT NOT NULL, status TEXT NOT NULL,
+                    task_type TEXT NOT NULL DEFAULT '', answer TEXT NOT NULL DEFAULT '',
+                    citations_json TEXT NOT NULL DEFAULT '[]', plan_json TEXT NOT NULL DEFAULT '[]',
+                    evidence_json TEXT NOT NULL DEFAULT '[]', budget_json TEXT NOT NULL,
+                    usage_json TEXT NOT NULL DEFAULT '{}', error_code TEXT,
+                    current_node TEXT, state_version INTEGER NOT NULL DEFAULT 0,
+                    cancellation_requested INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS agent_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                    sequence_number INTEGER NOT NULL, event_type TEXT NOT NULL,
+                    data_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                    UNIQUE(run_id, sequence_number)
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_events_run
+                    ON agent_events(run_id, sequence_number);
+                CREATE TABLE IF NOT EXISTS agent_checkpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                    state_version INTEGER NOT NULL, node TEXT NOT NULL,
+                    state_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                    UNIQUE(run_id, state_version)
+                );
+                CREATE TABLE IF NOT EXISTS agent_tool_calls (
+                    id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT NOT NULL,
+                    tool_name TEXT NOT NULL, arguments_json TEXT NOT NULL,
+                    status TEXT NOT NULL, result_json TEXT, error_code TEXT,
+                    duration_ms INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+                );
                 """
             )
             self._ensure_column(db, "qa_runs", "knowledge_base_id", "TEXT")

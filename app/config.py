@@ -24,6 +24,10 @@ class Settings:
     rerank_top_k: int = 12
     final_context_chunks: int = 8
     rrf_k: int = 60
+    agent_max_duration_seconds: int = 45
+    agent_max_nodes: int = 20
+    agent_max_retrieval_rounds: int = 3
+    agent_max_tool_calls: int = 8
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -45,6 +49,14 @@ class Settings:
             rerank_top_k=int(os.getenv("DEEPDOC_RERANK_TOP_K", "12")),
             final_context_chunks=int(os.getenv("DEEPDOC_FINAL_CONTEXT_CHUNKS", "8")),
             rrf_k=int(os.getenv("DEEPDOC_RRF_K", "60")),
+            agent_max_duration_seconds=int(
+                os.getenv("DEEPDOC_AGENT_MAX_DURATION_SECONDS", "45")
+            ),
+            agent_max_nodes=int(os.getenv("DEEPDOC_AGENT_MAX_NODES", "20")),
+            agent_max_retrieval_rounds=int(
+                os.getenv("DEEPDOC_AGENT_MAX_RETRIEVAL_ROUNDS", "3")
+            ),
+            agent_max_tool_calls=int(os.getenv("DEEPDOC_AGENT_MAX_TOOL_CALLS", "8")),
         )
 
     def ensure_directories(self) -> None:

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepdoc-agent"
-version = "0.2.0"
-description = "Citation-first hybrid RAG document question answering service"
+version = "0.3.0"
+description = "Controlled LangGraph agent for citation-first document research"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",
@@ -13,6 +13,7 @@ dependencies = [
   "python-multipart>=0.0.20,<1",
   "pypdf>=6,<7",
   "httpx>=0.28,<1",
+  "langgraph>=1.2.11,<2",
 ]
 
 [project.optional-dependencies]

@@ -4,9 +4,12 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, File, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Header, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
+from app.agents.models import AgentRunAccepted, AgentRunCreate, AgentRunView, ToolView
+from app.agents.repository import AgentRepository
+from app.agents.service import AgentService
 from app.config import Settings
 from app.db import Database
 from app.embedding import HashingEmbeddingProvider
@@ -45,16 +48,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rerank_top_k=config.rerank_top_k,
         rrf_k=config.rrf_k,
     )
-    qa = QAService(config, repository, retriever, build_llm(config))
+    llm = build_llm(config)
+    qa = QAService(config, repository, retriever, llm)
+    agent_repository = AgentRepository(database)
+    agent = AgentService(config, repository, qa, llm, agent_repository)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         documents.recover()
         yield
 
-    application = FastAPI(title="DeepDoc Agent RAG", version="0.2.0", lifespan=lifespan)
+    application = FastAPI(title="DeepDoc Agent", version="0.3.0", lifespan=lifespan)
     application.state.settings = config
     application.state.repository = repository
+    application.state.agent_repository = agent_repository
+    application.state.agent_service = agent
 
     @application.middleware("http")
     async def request_id_middleware(request: Request, call_next):
@@ -203,6 +211,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/v1/qa-runs/{run_id}", response_model=QARunView)
     def get_qa_run(run_id: str):
         return repository.get_qa_run(run_id)
+
+    @application.post("/v1/agent/runs", status_code=202, response_model=AgentRunAccepted)
+    def create_agent_run(body: AgentRunCreate, background_tasks: BackgroundTasks):
+        run = agent.create_run(
+            question=body.question,
+            knowledge_base_ids=body.knowledge_base_ids,
+            allow_web_search=body.allow_web_search,
+            output_format=body.output_format,
+            budget_overrides=body.budget.model_dump(exclude_none=True),
+        )
+        background_tasks.add_task(agent.execute, run["id"])
+        return {
+            "id": run["id"],
+            "status": run["status"],
+            "events_url": f"/v1/agent/runs/{run['id']}/events",
+        }
+
+    @application.get("/v1/agent/runs/{run_id}", response_model=AgentRunView)
+    def get_agent_run(run_id: str):
+        return agent_repository.get_run(run_id)
+
+    @application.get("/v1/agent/runs/{run_id}/events")
+    def get_agent_events(
+        run_id: str,
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ):
+        after = int(last_event_id) if last_event_id and last_event_id.isdigit() else 0
+        return StreamingResponse(
+            agent.event_stream(run_id, after),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @application.post("/v1/agent/runs/{run_id}/cancel", response_model=AgentRunView)
+    def cancel_agent_run(run_id: str):
+        return agent_repository.request_cancel(run_id)
+
+    @application.post("/v1/agent/runs/{run_id}/resume", response_model=AgentRunAccepted)
+    def resume_agent_run(run_id: str, background_tasks: BackgroundTasks):
+        run = agent_repository.reset_for_resume(run_id)
+        background_tasks.add_task(agent.execute, run_id, True)
+        return {
+            "id": run_id,
+            "status": run["status"],
+            "events_url": f"/v1/agent/runs/{run_id}/events",
+        }
+
+    @application.get("/v1/agent/runs/{run_id}/steps")
+    def get_agent_steps(run_id: str):
+        return agent_repository.get_run(run_id)["plan"]
+
+    @application.get("/v1/agent/runs/{run_id}/evidence")
+    def get_agent_evidence(run_id: str):
+        return agent_repository.get_run(run_id)["evidence"]
+
+    @application.get("/v1/agent/tools", response_model=list[ToolView])
+    def list_agent_tools():
+        return [spec.__dict__ for spec in agent.tools.specs()]
 
     @application.get("/health/live")
     def live():

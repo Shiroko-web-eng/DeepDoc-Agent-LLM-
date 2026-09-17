@@ -1,11 +1,18 @@
-# DeepDoc Agent RAG
+# DeepDoc Agent
 
-DeepDoc Agent RAG 是一个引用优先的多文档知识问答服务。当前版本在 MVP 基础上加入知识库、DOCX、确定性 Embedding、BM25、向量召回、RRF 融合、轻量 Reranker、检索诊断、跨文档问答和索引重建。
+DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档研究 Agent。0.3.0 版本在混合 RAG 基础上加入 LangGraph 工作流、Planner、知识库与计算工具、Evidence Evaluator、检查点、取消/恢复、报告生成和引用验证。
 
-默认开发模式不依赖外部模型或向量服务：元数据和向量写入 SQLite，Embedding 使用可复现的 Hashing Provider，回答使用抽取式模型，因此可直接在本地和 CI 中运行。检索与模型均通过独立接口接入，后续可以替换为 PostgreSQL、Qdrant、Redis、神经 Embedding 和 Cross-Encoder，而不改变 API 用例层。
+默认开发模式不依赖外部模型或向量服务：元数据、Agent Checkpoint 和向量写入 SQLite，Embedding 使用可复现的 Hashing Provider，Planner/Evaluator 使用确定性策略，回答使用抽取式模型。因此项目可直接在本地和 CI 中运行。检索、规划、工具和模型均通过独立边界接入，后续可以替换为 PostgreSQL、Qdrant、Redis、生产模型和外部工具。
 
 ## 功能
 
+- LangGraph 单 Agent 显式状态图。
+- Guard、Classifier、Planner、Retriever、Tool Executor、Evaluator、Report、Validator。
+- Agent Run、计划、Evidence、事件和 Checkpoint 持久化。
+- 节点、时长、检索轮次和工具次数预算。
+- 无进展检测、有限重试和确定终止。
+- Calculator 安全 AST 工具与知识库检索工具。
+- SSE 运行事件、Last-Event-ID 续传、取消和恢复。
 - PDF、DOCX、TXT、Markdown 上传和解析。
 - 知识库与多文档管理。
 - Query Normalize 和规则 Query Rewrite。
@@ -15,6 +22,8 @@ DeepDoc Agent RAG 是一个引用优先的多文档知识问答服务。当前�
 - 跨文档 SSE 问答和文档名、页码、原文引用。
 - 可恢复文档处理、幂等上传和可重建索引。
 - 保留 MVP 单文档 API 的向后兼容性。
+
+当前 Web Search 工具已注册但默认不可用；在配置受控 Provider、域名策略和 SSRF 防护前，Agent 不会执行外部网页检索。
 
 ## 本地运行
 
@@ -41,6 +50,38 @@ uvicorn app.main:app --reload
 ```
 
 随后在右上角选择 `DeepDoc Agent Server` 并运行。
+
+## 快速体验 Agent
+
+先按下方 RAG 步骤创建知识库并上传至少一份文档，然后创建 Agent Run：
+
+```powershell
+$body = @{
+  question = "比较差旅报销和采购报销的期限差异，并计算期限相差多少天"
+  knowledge_base_ids = @($kb.id)
+  allow_web_search = $false
+  output_format = "comparison_report"
+  budget = @{
+    max_duration_seconds = 45
+    max_nodes = 20
+    max_retrieval_rounds = 3
+    max_tool_calls = 8
+  }
+} | ConvertTo-Json -Depth 4
+
+$run = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/v1/agent/runs `
+  -ContentType application/json `
+  -Body $body
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/agent/runs/$($run.id)"
+```
+
+也可以通过以下地址读取 SSE 事件：
+
+```text
+GET /v1/agent/runs/{run_id}/events
+```
 
 ## 快速体验 RAG
 
@@ -90,6 +131,14 @@ $kb = Invoke-RestMethod -Method Post `
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| `POST` | `/v1/agent/runs` | 创建并执行 Agent Run |
+| `GET` | `/v1/agent/runs/{id}` | 查询状态、计划、Evidence、报告和用量 |
+| `GET` | `/v1/agent/runs/{id}/events` | 读取可续传 SSE 事件 |
+| `POST` | `/v1/agent/runs/{id}/cancel` | 幂等请求取消 |
+| `POST` | `/v1/agent/runs/{id}/resume` | 从检查点恢复失败或取消任务 |
+| `GET` | `/v1/agent/runs/{id}/steps` | 查询计划步骤 |
+| `GET` | `/v1/agent/runs/{id}/evidence` | 查询引用证据 |
+| `GET` | `/v1/agent/tools` | 查询工具和可用状态 |
 | `POST` | `/v1/knowledge-bases` | 创建知识库 |
 | `GET` | `/v1/knowledge-bases` | 查询知识库 |
 | `POST` | `/v1/knowledge-bases/{id}/documents` | 上传知识库文档 |
@@ -116,6 +165,10 @@ DEEPDOC_SPARSE_TOP_K=40
 DEEPDOC_RERANK_TOP_K=12
 DEEPDOC_FINAL_CONTEXT_CHUNKS=8
 DEEPDOC_RRF_K=60
+DEEPDOC_AGENT_MAX_DURATION_SECONDS=45
+DEEPDOC_AGENT_MAX_NODES=20
+DEEPDOC_AGENT_MAX_RETRIEVAL_ROUNDS=3
+DEEPDOC_AGENT_MAX_TOOL_CALLS=8
 ```
 
 使用 OpenAI-compatible 生成服务时设置：
@@ -127,7 +180,7 @@ DEEPDOC_LLM_BASE_URL=https://provider.example/v1
 DEEPDOC_LLM_API_KEY=...
 ```
 
-当前 Hashing Embedding 用于开发、测试和检索流程验证，不等同于生产级语义模型。上线前应依据 [RAG 设计方案](docs/rag-design.md) 实现并评测 Qdrant/PostgreSQL 适配、生产 Embedding 与 Cross-Encoder。
+当前 Hashing Embedding、确定性 Planner/Evaluator 和抽取式生成器用于开发、测试和工作流验证，不等同于生产级模型。上线前应依据 [Agent 设计方案](docs/agent-design.md) 接入生产模型、持久化 Checkpointer、Worker 队列、PostgreSQL/Qdrant/Redis 和受控 Web Search Provider。
 
 ## Docker
 
@@ -146,10 +199,11 @@ $testFiles = Get-ChildItem -LiteralPath .\tests -Filter 'validate-*.ps1'
 foreach ($testFile in $testFiles) { & $testFile.FullName }
 ```
 
-测试覆盖解析、DOCX、Embedding、BM25、向量召回、RRF、Reranker、知识库隔离、跨文档引用、索引重建、部署文件和旧 API 兼容性。
+测试覆盖 LangGraph 路由、Planner、预算终止、Calculator 安全、Checkpoint、SSE 续传、取消恢复、解析、DOCX、Embedding、BM25、RRF、知识库隔离、跨文档引用和旧 API 兼容性。
 
 ## 设计文档
 
+- [Agent 版本设计方案](docs/agent-design.md)
 - [RAG 版本设计方案](docs/rag-design.md)
 - [MVP 设计方案](docs/mvp-design.md)
 - [总体技术方案](docs/technical-solution.md)

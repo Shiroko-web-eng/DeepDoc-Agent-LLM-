@@ -29,3 +29,12 @@ def test_example_environment_contains_hybrid_rag_controls():
     assert "DEEPDOC_SPARSE_TOP_K=40" in environment
     assert "DEEPDOC_RERANK_TOP_K=12" in environment
     assert "DEEPDOC_RRF_K=60" in environment
+    assert "DEEPDOC_AGENT_MAX_DURATION_SECONDS=45" in environment
+    assert "DEEPDOC_AGENT_MAX_NODES=20" in environment
+    assert "DEEPDOC_AGENT_MAX_RETRIEVAL_ROUNDS=3" in environment
+
+
+def test_project_declares_supported_langgraph_dependency():
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "0.3.0"' in project
+    assert '"langgraph>=1.2.11,<2"' in project
