@@ -241,6 +241,8 @@ class AgentGraph:
                 })
         update.update(
             answer=answer, citations=citations, status="RUNNING",
+            model_usage={"prompt_tokens": generated.prompt_tokens,
+                         "completion_tokens": generated.completion_tokens},
             last_event={"type": "report.generated", "characters": len(answer)},
         )
         return update
@@ -286,6 +288,7 @@ class AgentGraph:
             "nodes": update["budget"]["nodes_used"],
             "retrieval_rounds": state.get("retrieval_rounds", 0),
             "tool_calls": state.get("tool_calls", 0),
+            **state.get("model_usage", {}),
         }
         update.update(
             status=status, answer=answer, usage=usage,

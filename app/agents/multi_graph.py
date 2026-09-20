@@ -247,6 +247,8 @@ class MultiAgentGraph:
         answer = "现有证据不足以完成该研究任务。"
         status = "INSUFFICIENT"
         error_code = "INSUFFICIENT_EVIDENCE"
+        prompt_tokens = None
+        completion_tokens = None
         if state.get("status") == "BUDGET_EXCEEDED":
             status, error_code, answer = (
                 "BUDGET_EXCEEDED", "BUDGET_EXCEEDED", "任务已达到运行预算上限。"
@@ -259,6 +261,8 @@ class MultiAgentGraph:
             )
         elif evidence:
             generated = self.llm.generate(state["question"], evidence)
+            prompt_tokens = generated.prompt_tokens
+            completion_tokens = generated.completion_tokens
             numbers = list(dict.fromkeys(generated.citation_numbers))
             if numbers and all(1 <= number <= len(evidence) for number in numbers):
                 for number in numbers:
@@ -285,6 +289,9 @@ class MultiAgentGraph:
                     error_code = "UNVERIFIED_CALCULATION"
         usage = {"duration_ms": int((time.time() - state["started_epoch"]) * 1000),
                  "nodes": 4 + len(results), "tool_calls": len(results),
-                 "subtasks": len(state["tasks"]), "parallel_limit": state["budget"]["max_parallel_agents"]}
+                 "subtasks": len(state["tasks"]),
+                 "parallel_limit": state["budget"]["max_parallel_agents"],
+                 "prompt_tokens": prompt_tokens,
+                 "completion_tokens": completion_tokens}
         return {"answer": answer, "citations": citations, "status": status,
                 "error_code": error_code, "usage": usage, "phase": "finished"}

@@ -1,11 +1,16 @@
 # DeepDoc Agent
 
-DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档研究系统。0.4.0 版本在单 Agent 基础上新增 Multi-Agent 研究图：Supervisor 路由与规划、隔离的 Research 子图、并行任务汇合、Verifier 子图及带引用报告。
+DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档研究系统。0.5.0 版本增加本地离线 Eval：不可变数据集版本、RAG/单 Agent/Multi-Agent 运行、规则指标、配对比较与门禁。此前的 Multi-Agent 研究图继续保留。
 
 默认开发模式不依赖外部模型或向量服务：元数据、Agent Checkpoint 和向量写入 SQLite，Multi-Agent LangGraph 检查点另存于同目录的 `*-langgraph.sqlite` 文件。Embedding 使用可复现的 Hashing Provider，规划、分析和核验采用确定性策略，回答使用抽取式模型。因此项目可直接在本地和 CI 中运行。检索、规划、工具和模型均通过独立边界接入，后续可替换为 PostgreSQL、Qdrant、Redis、生产模型和外部工具。
 
 ## 功能
 
+- 版本化 Eval 数据集与知识库索引/文档/Chunk 哈希快照；快照变化时拒绝复用旧基准。
+- RAG、单 Agent、Multi-Agent 三路径离线评测；原始运行 Artifact、错误与案例指标持久化。
+- Recall@5、MRR@5、nDCG@5、引用有效性、Gold 引用覆盖、字面 Claim 覆盖、拒答、路由和规则任务成功率。
+- P50/P95 延迟、Provider 实际 Token 用量（有返回时）、配对 bootstrap 置信区间及可配置门禁。
+- 评测接口以独立管理令牌保护；未配置令牌时默认关闭。
 - `auto|single|multi` 执行模式；跨知识库复杂研究自动走 Multi-Agent，简单任务保留单 Agent 快速路径。
 - Supervisor 将知识库研究拆成隔离子任务，通过 LangGraph `Send` 并行执行，按任务 ID 汇合去重。
 - Research 子图负责检索与 Claim 提取，Verifier 子图负责 Claim/原文匹配与引用筛选。
@@ -28,6 +33,8 @@ DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档
 - 保留 MVP 单文档 API 的向后兼容性。
 
 当前 Web Search 工具已注册但默认不可用；在配置受控 Provider、域名策略和 SSRF 防护前，Agent 不会执行外部网页检索。
+
+当前 Eval 的 Claim 覆盖只做字面匹配，不等同语义正确性或 Faithfulness。固定 LLM Judge、人工裁决、真实费用价格表、独立 Worker 和 CI 发布门禁尚未接入；这些字段不会伪装为已通过。评测用 SQLite 与 FastAPI 后台任务适合本地开发，不能作为多用户生产 Eval 服务。
 
 本地 Multi-Agent 版本仍由 FastAPI 后台任务执行；持久图检查点不等于独立 Worker 队列。进程意外退出后，目前不自动领取并继续未完成 Run。生产部署前须按 [Multi-Agent 设计方案](docs/multi-agent-design.md) 补齐独立 Worker、任务租约、Outbox、跨进程幂等和 PostgreSQL Checkpointer。当前 Verifier 是确定性原文匹配，不是语义事实核验模型；Benchmark 目标尚未达成。
 
@@ -105,6 +112,56 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/agent/runs/$($run.id)/tasks"
 ```
 
 `execution_mode` 默认 `auto`：仅跨知识库且包含比较、分析、研究等复杂意图时自动启用 Multi-Agent；也可明确指定 `single`。`DEEPDOC_MULTI_AGENT_ENABLED=false` 会禁用 Multi-Agent 路由。多任务预算不足时 Run 会以 `BUDGET_EXCEEDED` 结束，而不会悄悄跳过知识库。
+
+## 本地离线 Eval
+
+先准备至少一个已上传文档的知识库，并从检索结果或 `GET /v1/knowledge-bases/{id}/search` 获取真实 `chunk_id`。启动服务前设置仅供评测管理员使用的令牌；不要把它提交到 Git：
+
+```powershell
+$env:DEEPDOC_EVAL_ADMIN_TOKEN = "replace-with-a-long-random-secret"
+uvicorn app.main:app --reload
+```
+
+在另一个终端创建不可变数据集版本并运行基准（将变量换成实际值）：
+
+```powershell
+$headers = @{ "X-Eval-Token" = "replace-with-a-long-random-secret" }
+$datasetBody = @{
+  name = "expense-regression"
+  version = "1.0.0"
+  split = "regression"
+  cases = @(@{
+    case_id = "travel-001"
+    task_type = "fact"
+    question = "差旅报销期限是什么？"
+    knowledge_base_ids = @($kb.id)
+    gold_evidence_sets = @(@($chunkId))
+    expected_citation_chunk_ids = @($chunkId)
+    required_claims = @("30天")
+  })
+} | ConvertTo-Json -Depth 8
+$dataset = Invoke-RestMethod -Method Post -Headers $headers `
+  -Uri http://127.0.0.1:8000/v1/evaluations/datasets `
+  -ContentType application/json -Body $datasetBody
+$runBody = @{ dataset_id = $dataset.id; mode = "rag"; gates = @{
+  min_recall_at_5 = 0.85; min_rule_task_success = 0.85
+} } | ConvertTo-Json -Depth 5
+$run = Invoke-RestMethod -Method Post -Headers $headers `
+  -Uri http://127.0.0.1:8000/v1/evaluations/runs `
+  -ContentType application/json -Body $runBody
+Invoke-RestMethod -Headers $headers -Uri "http://127.0.0.1:8000/v1/evaluations/runs/$($run.id)"
+Invoke-RestMethod -Headers $headers -Uri "http://127.0.0.1:8000/v1/evaluations/runs/$($run.id)/cases"
+```
+
+`mode` 可选 `rag`、`single`、`multi`。RAG 遇到跨知识库用例记为 `NOT_APPLICABLE`，不计零分。对同一数据集分别运行两种模式后，可调用 `GET /v1/evaluations/runs/{candidate_id}/comparison?baseline={baseline_id}` 查看配对差异与 95% bootstrap 区间。`POST /v1/evaluations/runs/{id}/cancel` 可请求中断，重新执行已完成运行不会覆盖案例结果。数据集绑定当前语料快照，文档或索引变动后应发布新数据集版本。
+
+CI 中可对已发布的数据集直接执行规则门禁；只有运行完成且门禁为 `PASS` 时命令返回退出码 0，其他状态返回 1：
+
+```powershell
+python -m app.evaluation.cli --dataset-id $dataset.id --mode rag --min-recall-at-5 0.85 --min-rule-task-success 0.85
+```
+
+Eval 接口仅用管理令牌隔离评测数据，现有普通知识库接口并没有租户级 ACL；含敏感 Gold 的数据集应只在受控本地环境使用。`gate.status` 只有 `PASS` 才表示配置的规则阈值满足；`NOT_CONFIGURED` 与 `INSUFFICIENT_DATA` 都不是放行结论。实际费用和语义 Faithfulness 当前为 `null`，要求实际费用的门禁会返回 `INSUFFICIENT_DATA`。
 
 也可以通过以下地址读取 SSE 事件：
 
@@ -203,6 +260,7 @@ DEEPDOC_AGENT_MAX_TOOL_CALLS=8
 DEEPDOC_MULTI_AGENT_ENABLED=true
 DEEPDOC_MULTI_AGENT_MAX_SUBTASKS=4
 DEEPDOC_MULTI_AGENT_MAX_PARALLEL=2
+DEEPDOC_EVAL_ADMIN_TOKEN=
 ```
 
 使用 OpenAI-compatible 生成服务时设置：
@@ -233,7 +291,7 @@ $testFiles = Get-ChildItem -LiteralPath .\tests -Filter 'validate-*.ps1'
 foreach ($testFile in $testFiles) { & $testFile.FullName }
 ```
 
-测试覆盖单/Multi-Agent 路由、并行子任务、预算终止、Calculator 安全、Checkpoint、SSE 续传、取消恢复、数据库迁移、解析、DOCX、Embedding、BM25、RRF、知识库隔离、跨文档引用和旧 API 兼容性。
+测试覆盖 Eval 数据集校验、快照拒绝、三路径适配、规则指标、门禁、配对比较、令牌保护及既有单/Multi-Agent、RAG 与旧 API 兼容性。
 
 ## 设计文档
 

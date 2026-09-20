@@ -15,6 +15,8 @@ class GeneratedAnswer:
     text: str
     citation_numbers: list[int]
     model: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 class LLMClient(Protocol):
@@ -71,11 +73,23 @@ class OpenAICompatibleLLM:
                 timeout=self.settings.llm_timeout_seconds,
             )
             response.raise_for_status()
-            text = response.json()["choices"][0]["message"]["content"]
+            payload = response.json()
+            text = payload["choices"][0]["message"]["content"]
         except (httpx.HTTPError, KeyError, IndexError, TypeError) as exc:
             raise AppError("MODEL_CALL_FAILED", "模型调用失败", 502, True) from exc
         numbers = [int(value) for value in re.findall(r"\[C(\d+)]", text)]
-        return GeneratedAnswer(text, numbers, self.model_name)
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        if type(prompt_tokens) is not int or prompt_tokens < 0:
+            prompt_tokens = None
+        if type(completion_tokens) is not int or completion_tokens < 0:
+            completion_tokens = None
+        return GeneratedAnswer(
+            text, numbers, self.model_name, prompt_tokens, completion_tokens
+        )
 
 
 def build_llm(settings: Settings) -> LLMClient:

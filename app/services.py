@@ -199,13 +199,18 @@ class QAService:
                 yield _event("citation", citation)
             duration_ms = int((time.perf_counter() - started) * 1000)
             input_chars = sum(len(chunk["text"]) for chunk in evidence)
-            self.repository.complete_qa_run(run_id, answer, citations, input_chars, duration_ms)
+            self.repository.complete_qa_run(
+                run_id, answer, citations, input_chars, duration_ms,
+                generated.prompt_tokens, generated.completion_tokens,
+            )
             yield _event("usage", {
                 "input_chars": input_chars,
                 "output_chars": len(answer),
                 "duration_ms": duration_ms,
                 "model": generated.model,
                 "index_version": index_version,
+                "prompt_tokens": generated.prompt_tokens,
+                "completion_tokens": generated.completion_tokens,
             })
             yield _event("done", {"run_id": run_id})
         except AppError as exc:

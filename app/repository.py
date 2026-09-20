@@ -250,12 +250,16 @@ class Repository:
             )
 
     def complete_qa_run(self, run_id: str, answer: str, citations: list[dict[str, Any]],
-                        input_chars: int, duration_ms: int) -> None:
+                        input_chars: int, duration_ms: int,
+                        prompt_tokens: int | None = None,
+                        completion_tokens: int | None = None) -> None:
         with self.database.connect() as db:
             db.execute(
                 """UPDATE qa_runs SET answer = ?, status = 'COMPLETED', input_chars = ?,
-                output_chars = ?, duration_ms = ? WHERE id = ?""",
-                (answer, input_chars, len(answer), duration_ms, run_id),
+                output_chars = ?, duration_ms = ?, prompt_tokens = ?,
+                completion_tokens = ? WHERE id = ?""",
+                (answer, input_chars, len(answer), duration_ms,
+                 prompt_tokens, completion_tokens, run_id),
             )
             db.executemany(
                 "INSERT INTO citations(run_id, chunk_id, page_number, quote) VALUES (?, ?, ?, ?)",

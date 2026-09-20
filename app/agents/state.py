@@ -24,6 +24,7 @@ class AgentState(TypedDict, total=False):
     citations: list[dict[str, Any]]
     budget: dict[str, Any]
     usage: dict[str, Any]
+    model_usage: dict[str, int | None]
     retrieval_rounds: int
     tool_calls: int
     last_evidence_count: int

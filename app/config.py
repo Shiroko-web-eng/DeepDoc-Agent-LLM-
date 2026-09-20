@@ -31,6 +31,7 @@ class Settings:
     multi_agent_enabled: bool = True
     multi_agent_max_subtasks: int = 4
     multi_agent_max_parallel: int = 2
+    eval_admin_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -68,6 +69,7 @@ class Settings:
             multi_agent_max_parallel=int(
                 os.getenv("DEEPDOC_MULTI_AGENT_MAX_PARALLEL", "2")
             ),
+            eval_admin_token=os.getenv("DEEPDOC_EVAL_ADMIN_TOKEN", ""),
         )
 
     def ensure_directories(self) -> None:

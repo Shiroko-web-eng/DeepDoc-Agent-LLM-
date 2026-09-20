@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 
-from fastapi import BackgroundTasks, FastAPI, File, Header, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from app.agents.models import AgentRunAccepted, AgentRunCreate, AgentRunView, ToolView
@@ -14,6 +15,11 @@ from app.config import Settings
 from app.db import Database
 from app.embedding import HashingEmbeddingProvider
 from app.errors import AppError
+from app.evaluation.models import (
+    EvalDatasetCreate, EvalDatasetView, EvalRunAccepted, EvalRunCreate, EvalRunView,
+)
+from app.evaluation.repository import EvalRepository
+from app.evaluation.service import EvalService
 from app.generation import build_llm
 from app.models import (
     DocumentAccepted,
@@ -52,17 +58,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     qa = QAService(config, repository, retriever, llm)
     agent_repository = AgentRepository(database)
     agent = AgentService(config, repository, qa, llm, agent_repository)
+    eval_repository = EvalRepository(database)
+    evaluator = EvalService(config, repository, eval_repository, qa, agent)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         documents.recover()
         yield
 
-    application = FastAPI(title="DeepDoc Agent", version="0.4.0", lifespan=lifespan)
+    application = FastAPI(title="DeepDoc Agent", version="0.5.0", lifespan=lifespan)
     application.state.settings = config
     application.state.repository = repository
     application.state.agent_repository = agent_repository
     application.state.agent_service = agent
+    application.state.eval_repository = eval_repository
+    application.state.eval_service = evaluator
+
+    def require_eval_token(x_eval_token: str | None = Header(default=None)) -> None:
+        if not config.eval_admin_token:
+            raise AppError("EVAL_NOT_CONFIGURED", "请先配置评测管理令牌", 503)
+        if x_eval_token is None or not compare_digest(x_eval_token, config.eval_admin_token):
+            raise AppError("EVAL_FORBIDDEN", "评测管理令牌无效", 403)
 
     @application.middleware("http")
     async def request_id_middleware(request: Request, call_next):
@@ -281,6 +297,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/v1/agent/tools", response_model=list[ToolView])
     def list_agent_tools():
         return [spec.__dict__ for spec in agent.tools.specs()]
+
+    @application.post(
+        "/v1/evaluations/datasets", status_code=201,
+        response_model=EvalDatasetView, dependencies=[Depends(require_eval_token)],
+    )
+    def create_eval_dataset(body: EvalDatasetCreate):
+        return evaluator.create_dataset(body)
+
+    @application.get(
+        "/v1/evaluations/datasets", response_model=list[EvalDatasetView],
+        dependencies=[Depends(require_eval_token)],
+    )
+    def list_eval_datasets():
+        return eval_repository.list_datasets()
+
+    @application.get(
+        "/v1/evaluations/datasets/{dataset_id}", response_model=EvalDatasetView,
+        dependencies=[Depends(require_eval_token)],
+    )
+    def get_eval_dataset(dataset_id: str):
+        return eval_repository.get_dataset(dataset_id)
+
+    @application.post(
+        "/v1/evaluations/runs", status_code=202,
+        response_model=EvalRunAccepted, dependencies=[Depends(require_eval_token)],
+    )
+    def create_eval_run(body: EvalRunCreate, background_tasks: BackgroundTasks):
+        run = evaluator.create_run(body)
+        background_tasks.add_task(evaluator.execute, run["id"])
+        return {"id": run["id"], "status": run["status"]}
+
+    @application.get("/v1/evaluations/runs/{run_id}", response_model=EvalRunView,
+                     dependencies=[Depends(require_eval_token)])
+    def get_eval_run(run_id: str):
+        return eval_repository.get_run(run_id)
+
+    @application.get("/v1/evaluations/runs/{run_id}/cases",
+                     dependencies=[Depends(require_eval_token)])
+    def get_eval_cases(run_id: str):
+        return eval_repository.list_case_results(run_id)
+
+    @application.get("/v1/evaluations/runs/{run_id}/comparison",
+                     dependencies=[Depends(require_eval_token)])
+    def compare_eval_runs(run_id: str, baseline: str):
+        return evaluator.compare(run_id, baseline)
+
+    @application.post(
+        "/v1/evaluations/runs/{run_id}/cancel", response_model=EvalRunView,
+        dependencies=[Depends(require_eval_token)],
+    )
+    def cancel_eval_run(run_id: str):
+        return eval_repository.request_cancel(run_id)
 
     @application.get("/health/live")
     def live():

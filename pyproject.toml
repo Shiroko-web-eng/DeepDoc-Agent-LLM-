@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepdoc-agent"
-version = "0.4.0"
-description = "Controlled multi-agent document research with citation verification"
+version = "0.5.0"
+description = "Citation-first document research with versioned offline evaluation"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",

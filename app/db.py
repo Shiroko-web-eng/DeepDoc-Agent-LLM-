@@ -132,10 +132,36 @@ class Database:
                     PRIMARY KEY (run_id, task_id),
                     FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS eval_datasets (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
+                    split TEXT NOT NULL, description TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL, corpus_snapshot_json TEXT NOT NULL,
+                    cases_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    UNIQUE(name, version)
+                );
+                CREATE TABLE IF NOT EXISTS eval_runs (
+                    id TEXT PRIMARY KEY, dataset_id TEXT NOT NULL,
+                    mode TEXT NOT NULL, status TEXT NOT NULL,
+                    config_json TEXT NOT NULL, summary_json TEXT NOT NULL DEFAULT '{}',
+                    gate_json TEXT NOT NULL DEFAULT '{}',
+                    cancellation_requested INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+                    FOREIGN KEY(dataset_id) REFERENCES eval_datasets(id)
+                );
+                CREATE TABLE IF NOT EXISTS eval_case_results (
+                    run_id TEXT NOT NULL, case_id TEXT NOT NULL,
+                    status TEXT NOT NULL, artifact_json TEXT NOT NULL,
+                    metrics_json TEXT NOT NULL, error_code TEXT,
+                    duration_ms INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, case_id),
+                    FOREIGN KEY(run_id) REFERENCES eval_runs(id) ON DELETE CASCADE
+                );
                 """
             )
             self._ensure_column(db, "qa_runs", "knowledge_base_id", "TEXT")
             self._ensure_column(db, "qa_runs", "retrieval_trace", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(db, "qa_runs", "prompt_tokens", "INTEGER")
+            self._ensure_column(db, "qa_runs", "completion_tokens", "INTEGER")
             self._ensure_column(db, "agent_runs", "execution_mode", "TEXT NOT NULL DEFAULT 'single'")
             self._ensure_column(db, "agent_runs", "route_reason", "TEXT NOT NULL DEFAULT 'legacy'")
             self._ensure_column(db, "agent_runs", "graph_version", "TEXT NOT NULL DEFAULT 'agent-v1'")

@@ -124,6 +124,8 @@ class QARunView(BaseModel):
     input_chars: int
     output_chars: int
     duration_ms: int
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     error_code: str | None = None
     knowledge_base_id: str | None = None
     retrieval_trace: dict = Field(default_factory=dict)

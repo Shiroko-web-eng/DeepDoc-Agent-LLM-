@@ -244,6 +244,7 @@ class AgentService:
             "citations": [],
             "budget": run["budget"],
             "usage": {},
+            "model_usage": {},
             "retrieval_rounds": 0,
             "tool_calls": 0,
             "last_evidence_count": 0,

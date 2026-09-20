@@ -39,7 +39,8 @@ def test_initialize_migrates_mvp_database_and_links_existing_documents(tmp_path)
         qa_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(qa_runs)").fetchall()
         }
-    assert {"knowledge_base_id", "retrieval_trace"} <= qa_columns
+    assert {"knowledge_base_id", "retrieval_trace", "prompt_tokens",
+            "completion_tokens"} <= qa_columns
 
 
 def test_initialize_migrates_agent_runs_for_multi_agent(tmp_path):
