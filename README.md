@@ -237,6 +237,7 @@ foreach ($testFile in $testFiles) { & $testFile.FullName }
 
 ## 设计文档
 
+- [Eval 版本设计方案](docs/eval-design.md)
 - [Multi-Agent 版本设计方案](docs/multi-agent-design.md)
 - [Agent 版本设计方案](docs/agent-design.md)
 - [RAG 版本设计方案](docs/rag-design.md)
