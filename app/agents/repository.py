@@ -18,17 +18,20 @@ class AgentRepository:
 
     def create_run(self, *, question: str, knowledge_base_ids: list[str],
                    allow_web_search: bool, output_format: str,
-                   budget: dict[str, Any]) -> dict[str, Any]:
+                   budget: dict[str, Any], execution_mode: str = "single",
+                   route_reason: str = "legacy") -> dict[str, Any]:
         run_id = str(uuid.uuid4())
         now = utc_now()
         with self.database.connect() as db:
             db.execute(
                 """INSERT INTO agent_runs
                 (id, question, knowledge_base_ids, allow_web_search, output_format,
-                 status, budget_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?)""",
+                 status, budget_json, created_at, updated_at, execution_mode,
+                 route_reason, graph_version)
+                VALUES (?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?)""",
                 (run_id, question, json.dumps(knowledge_base_ids), int(allow_web_search),
-                 output_format, json.dumps(budget), now, now),
+                 output_format, json.dumps(budget), now, now, execution_mode,
+                 route_reason, "multi-v1" if execution_mode == "multi" else "agent-v1"),
             )
         self.append_event(run_id, "run.created", {"status": "QUEUED"})
         return self.get_run(run_id)
@@ -182,3 +185,35 @@ class AgentRepository:
             )
         self.append_event(run_id, "run.resumed", {})
         return self.get_run(run_id)
+
+    def save_task(self, run_id: str, task: dict[str, Any]) -> None:
+        now = utc_now()
+        with self.database.connect() as db:
+            db.execute(
+                """INSERT INTO agent_tasks
+                (run_id, task_id, agent_type, objective, status,
+                 knowledge_base_id, result_json, error_code, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, task_id) DO UPDATE SET
+                status = excluded.status, result_json = excluded.result_json,
+                error_code = excluded.error_code, updated_at = excluded.updated_at""",
+                (run_id, task["task_id"], task["agent_type"], task["objective"],
+                 task["status"], task["knowledge_base_id"],
+                 json.dumps(task.get("result", {}), ensure_ascii=False),
+                 task.get("error_code"), now, now),
+            )
+
+    def list_tasks(self, run_id: str) -> list[dict[str, Any]]:
+        self.get_run(run_id)
+        with self.database.connect() as db:
+            rows = db.execute(
+                """SELECT task_id, agent_type, objective, status, knowledge_base_id,
+                result_json, error_code, created_at, updated_at FROM agent_tasks
+                WHERE run_id = ? ORDER BY task_id""", (run_id,),
+            ).fetchall()
+        tasks = []
+        for row in rows:
+            task = dict(row)
+            task["result"] = json.loads(task.pop("result_json"))
+            tasks.append(task)
+        return tasks

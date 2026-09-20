@@ -10,12 +10,15 @@ class AgentBudgetRequest(BaseModel):
     max_nodes: int | None = Field(default=None, ge=4, le=32)
     max_retrieval_rounds: int | None = Field(default=None, ge=1, le=12)
     max_tool_calls: int | None = Field(default=None, ge=0, le=12)
+    max_subtasks: int | None = Field(default=None, ge=1, le=8)
+    max_parallel_agents: int | None = Field(default=None, ge=1, le=4)
 
 
 class AgentRunCreate(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     knowledge_base_ids: list[str] = Field(min_length=1, max_length=8)
     allow_web_search: bool = False
+    execution_mode: Literal["auto", "single", "multi"] = "auto"
     output_format: Literal[
         "direct_answer", "structured_summary", "comparison_report", "research_brief"
     ] = "research_brief"
@@ -50,6 +53,9 @@ class AgentRunView(BaseModel):
     knowledge_base_ids: list[str]
     allow_web_search: bool
     output_format: str
+    execution_mode: str
+    route_reason: str
+    graph_version: str
     status: str
     task_type: str
     answer: str

@@ -58,7 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         documents.recover()
         yield
 
-    application = FastAPI(title="DeepDoc Agent", version="0.3.0", lifespan=lifespan)
+    application = FastAPI(title="DeepDoc Agent", version="0.4.0", lifespan=lifespan)
     application.state.settings = config
     application.state.repository = repository
     application.state.agent_repository = agent_repository
@@ -220,6 +220,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_web_search=body.allow_web_search,
             output_format=body.output_format,
             budget_overrides=body.budget.model_dump(exclude_none=True),
+            execution_mode=body.execution_mode,
         )
         background_tasks.add_task(agent.execute, run["id"])
         return {
@@ -261,6 +262,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/v1/agent/runs/{run_id}/steps")
     def get_agent_steps(run_id: str):
         return agent_repository.get_run(run_id)["plan"]
+
+    @application.get("/v1/agent/runs/{run_id}/tasks")
+    def get_agent_tasks(run_id: str):
+        return agent_repository.list_tasks(run_id)
+
+    @application.get("/v1/agent/runs/{run_id}/tasks/{task_id}")
+    def get_agent_task(run_id: str, task_id: str):
+        for task in agent_repository.list_tasks(run_id):
+            if task["task_id"] == task_id:
+                return task
+        raise AppError("TASK_NOT_FOUND", "子任务不存在", 404)
 
     @application.get("/v1/agent/runs/{run_id}/evidence")
     def get_agent_evidence(run_id: str):

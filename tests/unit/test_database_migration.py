@@ -40,3 +40,30 @@ def test_initialize_migrates_mvp_database_and_links_existing_documents(tmp_path)
             row[1] for row in connection.execute("PRAGMA table_info(qa_runs)").fetchall()
         }
     assert {"knowledge_base_id", "retrieval_trace"} <= qa_columns
+
+
+def test_initialize_migrates_agent_runs_for_multi_agent(tmp_path):
+    database = Database(tmp_path / "agent.db")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute(
+            """INSERT INTO agent_runs
+            (id, question, knowledge_base_ids, output_format, status,
+             budget_json, created_at, updated_at)
+            VALUES ('legacy-run', '问题', '["default"]', 'research_brief',
+                    'COMPLETED', '{}', '2026-01-01', '2026-01-01')"""
+        )
+        connection.execute("ALTER TABLE agent_runs DROP COLUMN execution_mode")
+        connection.execute("ALTER TABLE agent_runs DROP COLUMN route_reason")
+        connection.execute("ALTER TABLE agent_runs DROP COLUMN graph_version")
+    database.initialize()
+    with database.connect() as connection:
+        row = connection.execute(
+            "SELECT execution_mode, route_reason, graph_version FROM agent_runs WHERE id = ?",
+            ("legacy-run",),
+        ).fetchone()
+        tasks_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_tasks'"
+        ).fetchone()
+    assert tuple(row) == ("single", "legacy", "agent-v1")
+    assert tasks_table is not None

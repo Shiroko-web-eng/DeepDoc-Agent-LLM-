@@ -124,10 +124,21 @@ class Database:
                     duration_ms INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
                     FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                    run_id TEXT NOT NULL, task_id TEXT NOT NULL, agent_type TEXT NOT NULL,
+                    objective TEXT NOT NULL, status TEXT NOT NULL,
+                    knowledge_base_id TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '{}',
+                    error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, task_id),
+                    FOREIGN KEY(run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+                );
                 """
             )
             self._ensure_column(db, "qa_runs", "knowledge_base_id", "TEXT")
             self._ensure_column(db, "qa_runs", "retrieval_trace", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(db, "agent_runs", "execution_mode", "TEXT NOT NULL DEFAULT 'single'")
+            self._ensure_column(db, "agent_runs", "route_reason", "TEXT NOT NULL DEFAULT 'legacy'")
+            self._ensure_column(db, "agent_runs", "graph_version", "TEXT NOT NULL DEFAULT 'agent-v1'")
             now = utc_now()
             db.execute(
                 """INSERT OR IGNORE INTO knowledge_bases

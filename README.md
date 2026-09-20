@@ -1,11 +1,15 @@
 # DeepDoc Agent
 
-DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档研究 Agent。0.3.0 版本在混合 RAG 基础上加入 LangGraph 工作流、Planner、知识库与计算工具、Evidence Evaluator、检查点、取消/恢复、报告生成和引用验证。
+DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档研究系统。0.4.0 版本在单 Agent 基础上新增 Multi-Agent 研究图：Supervisor 路由与规划、隔离的 Research 子图、并行任务汇合、Verifier 子图及带引用报告。
 
-默认开发模式不依赖外部模型或向量服务：元数据、Agent Checkpoint 和向量写入 SQLite，Embedding 使用可复现的 Hashing Provider，Planner/Evaluator 使用确定性策略，回答使用抽取式模型。因此项目可直接在本地和 CI 中运行。检索、规划、工具和模型均通过独立边界接入，后续可以替换为 PostgreSQL、Qdrant、Redis、生产模型和外部工具。
+默认开发模式不依赖外部模型或向量服务：元数据、Agent Checkpoint 和向量写入 SQLite，Multi-Agent LangGraph 检查点另存于同目录的 `*-langgraph.sqlite` 文件。Embedding 使用可复现的 Hashing Provider，规划、分析和核验采用确定性策略，回答使用抽取式模型。因此项目可直接在本地和 CI 中运行。检索、规划、工具和模型均通过独立边界接入，后续可替换为 PostgreSQL、Qdrant、Redis、生产模型和外部工具。
 
 ## 功能
 
+- `auto|single|multi` 执行模式；跨知识库复杂研究自动走 Multi-Agent，简单任务保留单 Agent 快速路径。
+- Supervisor 将知识库研究拆成隔离子任务，通过 LangGraph `Send` 并行执行，按任务 ID 汇合去重。
+- Research 子图负责检索与 Claim 提取，Verifier 子图负责 Claim/原文匹配与引用筛选。
+- Multi-Agent 子任务状态、运行事件、预算与持久 SQLite 图检查点。
 - LangGraph 单 Agent 显式状态图。
 - Guard、Classifier、Planner、Retriever、Tool Executor、Evaluator、Report、Validator。
 - Agent Run、计划、Evidence、事件和 Checkpoint 持久化。
@@ -24,6 +28,8 @@ DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档
 - 保留 MVP 单文档 API 的向后兼容性。
 
 当前 Web Search 工具已注册但默认不可用；在配置受控 Provider、域名策略和 SSRF 防护前，Agent 不会执行外部网页检索。
+
+本地 Multi-Agent 版本仍由 FastAPI 后台任务执行；持久图检查点不等于独立 Worker 队列。进程意外退出后，目前不自动领取并继续未完成 Run。生产部署前须按 [Multi-Agent 设计方案](docs/multi-agent-design.md) 补齐独立 Worker、任务租约、Outbox、跨进程幂等和 PostgreSQL Checkpointer。当前 Verifier 是确定性原文匹配，不是语义事实核验模型；Benchmark 目标尚未达成。
 
 ## 本地运行
 
@@ -76,6 +82,29 @@ $run = Invoke-RestMethod -Method Post `
 
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/agent/runs/$($run.id)"
 ```
+
+### Multi-Agent 跨知识库研究
+
+至少创建两个已上传文档的知识库，然后调用现有 Run API：
+
+```powershell
+$body = @{
+  question = "比较两套制度的审批流程和期限差异"
+  knowledge_base_ids = @($travelKb.id, $purchaseKb.id)
+  execution_mode = "multi"
+  output_format = "comparison_report"
+  budget = @{ max_subtasks = 4; max_parallel_agents = 2; max_tool_calls = 4 }
+} | ConvertTo-Json -Depth 4
+
+$run = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/v1/agent/runs `
+  -ContentType application/json -Body $body
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/agent/runs/$($run.id)"
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/agent/runs/$($run.id)/tasks"
+```
+
+`execution_mode` 默认 `auto`：仅跨知识库且包含比较、分析、研究等复杂意图时自动启用 Multi-Agent；也可明确指定 `single`。`DEEPDOC_MULTI_AGENT_ENABLED=false` 会禁用 Multi-Agent 路由。多任务预算不足时 Run 会以 `BUDGET_EXCEEDED` 结束，而不会悄悄跳过知识库。
 
 也可以通过以下地址读取 SSE 事件：
 
@@ -137,6 +166,8 @@ $kb = Invoke-RestMethod -Method Post `
 | `POST` | `/v1/agent/runs/{id}/cancel` | 幂等请求取消 |
 | `POST` | `/v1/agent/runs/{id}/resume` | 从检查点恢复失败或取消任务 |
 | `GET` | `/v1/agent/runs/{id}/steps` | 查询计划步骤 |
+| `GET` | `/v1/agent/runs/{id}/tasks` | 查询 Multi-Agent 子任务与结果 |
+| `GET` | `/v1/agent/runs/{id}/tasks/{task_id}` | 查询单个子任务 |
 | `GET` | `/v1/agent/runs/{id}/evidence` | 查询引用证据 |
 | `GET` | `/v1/agent/tools` | 查询工具和可用状态 |
 | `POST` | `/v1/knowledge-bases` | 创建知识库 |
@@ -169,6 +200,9 @@ DEEPDOC_AGENT_MAX_DURATION_SECONDS=45
 DEEPDOC_AGENT_MAX_NODES=20
 DEEPDOC_AGENT_MAX_RETRIEVAL_ROUNDS=3
 DEEPDOC_AGENT_MAX_TOOL_CALLS=8
+DEEPDOC_MULTI_AGENT_ENABLED=true
+DEEPDOC_MULTI_AGENT_MAX_SUBTASKS=4
+DEEPDOC_MULTI_AGENT_MAX_PARALLEL=2
 ```
 
 使用 OpenAI-compatible 生成服务时设置：
@@ -180,7 +214,7 @@ DEEPDOC_LLM_BASE_URL=https://provider.example/v1
 DEEPDOC_LLM_API_KEY=...
 ```
 
-当前 Hashing Embedding、确定性 Planner/Evaluator 和抽取式生成器用于开发、测试和工作流验证，不等同于生产级模型。上线前应依据 [Agent 设计方案](docs/agent-design.md) 接入生产模型、持久化 Checkpointer、Worker 队列、PostgreSQL/Qdrant/Redis 和受控 Web Search Provider。
+当前 Hashing Embedding、确定性 Planner/Evaluator/Verifier 和抽取式生成器用于开发、测试和工作流验证，不等同于生产级模型。上线前应依据 [Agent 设计方案](docs/agent-design.md) 与 [Multi-Agent 设计方案](docs/multi-agent-design.md) 接入生产模型、独立 Worker 队列、PostgreSQL/Qdrant/Redis 和受控 Web Search Provider。
 
 ## Docker
 
@@ -199,10 +233,11 @@ $testFiles = Get-ChildItem -LiteralPath .\tests -Filter 'validate-*.ps1'
 foreach ($testFile in $testFiles) { & $testFile.FullName }
 ```
 
-测试覆盖 LangGraph 路由、Planner、预算终止、Calculator 安全、Checkpoint、SSE 续传、取消恢复、解析、DOCX、Embedding、BM25、RRF、知识库隔离、跨文档引用和旧 API 兼容性。
+测试覆盖单/Multi-Agent 路由、并行子任务、预算终止、Calculator 安全、Checkpoint、SSE 续传、取消恢复、数据库迁移、解析、DOCX、Embedding、BM25、RRF、知识库隔离、跨文档引用和旧 API 兼容性。
 
 ## 设计文档
 
+- [Multi-Agent 版本设计方案](docs/multi-agent-design.md)
 - [Agent 版本设计方案](docs/agent-design.md)
 - [RAG 版本设计方案](docs/rag-design.md)
 - [MVP 设计方案](docs/mvp-design.md)

@@ -28,6 +28,9 @@ class Settings:
     agent_max_nodes: int = 20
     agent_max_retrieval_rounds: int = 3
     agent_max_tool_calls: int = 8
+    multi_agent_enabled: bool = True
+    multi_agent_max_subtasks: int = 4
+    multi_agent_max_parallel: int = 2
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -57,6 +60,14 @@ class Settings:
                 os.getenv("DEEPDOC_AGENT_MAX_RETRIEVAL_ROUNDS", "3")
             ),
             agent_max_tool_calls=int(os.getenv("DEEPDOC_AGENT_MAX_TOOL_CALLS", "8")),
+            multi_agent_enabled=os.getenv("DEEPDOC_MULTI_AGENT_ENABLED", "true").lower()
+            in {"1", "true", "yes"},
+            multi_agent_max_subtasks=int(
+                os.getenv("DEEPDOC_MULTI_AGENT_MAX_SUBTASKS", "4")
+            ),
+            multi_agent_max_parallel=int(
+                os.getenv("DEEPDOC_MULTI_AGENT_MAX_PARALLEL", "2")
+            ),
         )
 
     def ensure_directories(self) -> None:
