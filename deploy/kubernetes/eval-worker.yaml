@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepdoc-eval-worker
+  namespace: deepdoc
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: deepdoc-eval-worker}}
+  template:
+    metadata: {labels: {app: deepdoc-eval-worker}}
+    spec:
+      serviceAccountName: deepdoc
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/deepdoc-agent@sha256:replace-with-release-digest
+          args: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef: {name: deepdoc-config}
+            - secretRef: {name: deepdoc-secrets}
+          env: [{name: DEEPDOC_WORKER_KINDS, value: evaluation.execute}]
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: deepdoc-eval-worker
+  namespace: deepdoc
+spec:
+  scaleTargetRef: {name: deepdoc-eval-worker}
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  cooldownPeriod: 300
+  triggers:
+    - type: postgresql
+      metadata:
+        connectionFromEnv: DEEPDOC_DATABASE_URL
+        query: "SELECT deepdoc_queued_jobs(ARRAY['evaluation.execute'])"
+        targetQueryValue: "1"

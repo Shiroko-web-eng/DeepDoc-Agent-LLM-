@@ -52,11 +52,15 @@ class HybridRetriever:
         self.rewriter = QueryRewriter()
 
     def search(self, query: str, chunks: list[dict[str, Any]], limit: int = 8,
-               max_chars: int = 16000) -> tuple[RewrittenQuery, list[dict[str, Any]]]:
+               max_chars: int = 16000,
+               query_vector: list[float] | None = None
+               ) -> tuple[RewrittenQuery, list[dict[str, Any]]]:
         rewritten = self.rewriter.rewrite(query)
         if not chunks:
             return rewritten, []
-        dense_scores = self._dense_scores(rewritten.semantic_query, chunks)
+        dense_scores = self._dense_scores(
+            rewritten.semantic_query, chunks, query_vector=query_vector
+        )
         sparse_scores = self._bm25_scores(rewritten.lexical_queries, chunks)
         dense_order = self._rank(dense_scores, chunks, self.dense_top_k)
         sparse_order = self._rank(sparse_scores, chunks, self.sparse_top_k)
@@ -80,8 +84,9 @@ class HybridRetriever:
                 break
         return rewritten, selected
 
-    def _dense_scores(self, query: str, chunks: list[dict[str, Any]]) -> dict[str, float]:
-        query_vector = self.embedder.embed_query(query)
+    def _dense_scores(self, query: str, chunks: list[dict[str, Any]],
+                      query_vector: list[float] | None = None) -> dict[str, float]:
+        query_vector = query_vector or self.embedder.embed_query(query)
         scores: dict[str, float] = {}
         for chunk in chunks:
             vector = chunk.get("embedding") or []

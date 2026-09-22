@@ -1,27 +1,90 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
+
+from app.tenant import current_principal
 
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+class HybridRow(dict[str, Any]):
+    def __init__(self, names: list[str], values: tuple[Any, ...]):
+        super().__init__(zip(names, values, strict=True))
+        self._values = values
+
+    def __getitem__(self, key: str | int) -> Any:
+        return self._values[key] if isinstance(key, int) else super().__getitem__(key)
+
+
+def _postgres_row_factory(cursor):
+    names = [column.name for column in cursor.description]
+    return lambda values: HybridRow(names, values)
+
+
+def _postgres_sql(sql: str) -> str:
+    sql = sql.replace("?", "%s")
+    return re.sub(r"(?<!:):([A-Za-z_][A-Za-z0-9_]*)", r"%(\1)s", sql)
+
+
+class PostgresConnection:
+    def __init__(self, connection: Any):
+        self.connection = connection
+
+    def execute(self, sql: str, parameters: Any = None):
+        return self.connection.execute(_postgres_sql(sql), parameters)
+
+    def executemany(self, sql: str, parameters: Any):
+        with self.connection.cursor() as cursor:
+            cursor.executemany(_postgres_sql(sql), parameters)
+
+
 class Database:
-    def __init__(self, path: Path):
-        self.path = path
+    def __init__(self, path: Path | str):
+        self.target = path
+        self.is_postgres = isinstance(path, str) and path.startswith(
+            ("postgresql://", "postgresql+psycopg://")
+        )
+        self.path = Path(".") if self.is_postgres else Path(path)
+        self._active: ContextVar[Any | None] = ContextVar(
+            f"deepdoc_db_{id(self)}", default=None
+        )
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
+    def connect(self) -> Iterator[Any]:
+        active = self._active.get()
+        if active is not None:
+            yield active
+            return
+        if self.is_postgres:
+            try:
+                import psycopg
+            except ImportError as exc:
+                raise RuntimeError("install the production extra to use PostgreSQL") from exc
+            connection = psycopg.connect(
+                str(self.target).replace("postgresql+psycopg://", "postgresql://"),
+                row_factory=_postgres_row_factory,
+            )
+            principal = current_principal()
+            connection.execute("SELECT set_config('app.tenant_id', %s, false)",
+                               (principal.tenant_id,))
+            connection.execute("SELECT set_config('app.roles', %s, false)",
+                               (",".join(principal.roles),))
+            exposed: Any = PostgresConnection(connection)
+        else:
+            connection = sqlite3.connect(self.path, timeout=30)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            exposed = connection
         try:
-            yield connection
+            yield exposed
             connection.commit()
         except Exception:
             connection.rollback()
@@ -29,7 +92,21 @@ class Database:
         finally:
             connection.close()
 
+    @contextmanager
+    def transaction(self) -> Iterator[Any]:
+        with self.connect() as connection:
+            token = self._active.set(connection)
+            try:
+                yield connection
+            finally:
+                self._active.reset(token)
+
     def initialize(self) -> None:
+        if self.is_postgres:
+            migration = Path(__file__).with_name("migrations") / "001_production.sql"
+            with self.connect() as db:
+                db.execute(migration.read_text(encoding="utf-8"))
+            return
         with self.connect() as db:
             db.executescript(
                 """
@@ -156,6 +233,23 @@ class Database:
                     PRIMARY KEY (run_id, case_id),
                     FOREIGN KEY(run_id) REFERENCES eval_runs(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS durable_jobs (
+                    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
+                    kind TEXT NOT NULL, payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL, available_at TEXT NOT NULL,
+                    lease_owner TEXT, lease_expires_at TEXT, error_code TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_durable_jobs_claim
+                    ON durable_jobs(status, available_at, created_at);
+                CREATE TABLE IF NOT EXISTS request_idempotency (
+                    tenant_id TEXT NOT NULL, route TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL, request_sha256 TEXT NOT NULL,
+                    response_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    PRIMARY KEY(tenant_id, route, idempotency_key)
+                );
                 """
             )
             self._ensure_column(db, "qa_runs", "knowledge_base_id", "TEXT")
@@ -178,6 +272,17 @@ class Database:
                 SELECT 'default', id, ? FROM documents""",
                 (now,),
             )
+
+    def is_integrity_error(self, exc: Exception) -> bool:
+        if isinstance(exc, sqlite3.IntegrityError):
+            return True
+        if self.is_postgres:
+            try:
+                import psycopg
+                return isinstance(exc, psycopg.IntegrityError)
+            except ImportError:
+                return False
+        return False
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str,

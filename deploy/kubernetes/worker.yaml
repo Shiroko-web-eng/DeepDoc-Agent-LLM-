@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepdoc-ingestion-worker
+  namespace: deepdoc
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: deepdoc-ingestion-worker}}
+  template:
+    metadata: {labels: {app: deepdoc-ingestion-worker}}
+    spec:
+      serviceAccountName: deepdoc
+      terminationGracePeriodSeconds: 75
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/deepdoc-agent@sha256:replace-with-release-digest
+          args: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef: {name: deepdoc-config}
+            - secretRef: {name: deepdoc-secrets}
+          env:
+            - name: DEEPDOC_WORKER_KINDS
+              value: document.process,knowledge_base.reindex
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {cpu: "4", memory: 4Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {sizeLimit: 512Mi}}]
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: deepdoc-ingestion-worker
+  namespace: deepdoc
+spec:
+  scaleTargetRef: {name: deepdoc-ingestion-worker}
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  cooldownPeriod: 300
+  triggers:
+    - type: postgresql
+      metadata:
+        connectionFromEnv: DEEPDOC_DATABASE_URL
+        query: "SELECT deepdoc_queued_jobs(ARRAY['document.process','knowledge_base.reindex'])"
+        targetQueryValue: "5"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepdoc-agent-worker
+  namespace: deepdoc
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: deepdoc-agent-worker}}
+  template:
+    metadata: {labels: {app: deepdoc-agent-worker}}
+    spec:
+      serviceAccountName: deepdoc
+      terminationGracePeriodSeconds: 135
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/deepdoc-agent@sha256:replace-with-release-digest
+          args: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef: {name: deepdoc-config}
+            - secretRef: {name: deepdoc-secrets}
+          env: [{name: DEEPDOC_WORKER_KINDS, value: agent.execute}]
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {cpu: "4", memory: 4Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {sizeLimit: 512Mi}}]
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: deepdoc-agent-worker
+  namespace: deepdoc
+spec:
+  scaleTargetRef: {name: deepdoc-agent-worker}
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  cooldownPeriod: 300
+  triggers:
+    - type: postgresql
+      metadata:
+        connectionFromEnv: DEEPDOC_DATABASE_URL
+        query: "SELECT deepdoc_queued_jobs(ARRAY['agent.execute'])"
+        targetQueryValue: "2"

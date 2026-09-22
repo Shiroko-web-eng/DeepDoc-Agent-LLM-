@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: deepdoc
+      POSTGRES_USER: deepdoc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - deepdoc-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepdoc -d deepdoc"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - deepdoc-objects:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD && mc mb --ignore-existing local/$$DEEPDOC_S3_BUCKET"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      DEEPDOC_S3_BUCKET: ${DEEPDOC_S3_BUCKET:-deepdoc}
+    depends_on:
+      minio:
+        condition: service_started
+
+  migrate:
+    build: .
+    command: ["python", "-m", "app.migrate"]
+    environment: &production-env
+      DEEPDOC_ENV: production
+      DEEPDOC_DATABASE_URL: postgresql://deepdoc:${POSTGRES_PASSWORD}@postgres:5432/deepdoc
+      DEEPDOC_TASK_MODE: durable
+      DEEPDOC_AUTO_MIGRATE: "false"
+      DEEPDOC_STORAGE_BACKEND: s3
+      DEEPDOC_S3_BUCKET: ${DEEPDOC_S3_BUCKET:-deepdoc}
+      DEEPDOC_S3_ENDPOINT_URL: http://minio:9000
+      DEEPDOC_S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      DEEPDOC_AUTH_MODE: oidc
+      DEEPDOC_OIDC_ISSUER: ${DEEPDOC_OIDC_ISSUER:?set DEEPDOC_OIDC_ISSUER}
+      DEEPDOC_OIDC_AUDIENCE: ${DEEPDOC_OIDC_AUDIENCE:?set DEEPDOC_OIDC_AUDIENCE}
+      DEEPDOC_OIDC_JWKS_URL: ${DEEPDOC_OIDC_JWKS_URL:?set DEEPDOC_OIDC_JWKS_URL}
+      DEEPDOC_LLM_PROVIDER: openai-compatible
+      DEEPDOC_LLM_MODEL: ${DEEPDOC_LLM_MODEL:?set DEEPDOC_LLM_MODEL}
+      DEEPDOC_LLM_BASE_URL: ${DEEPDOC_LLM_BASE_URL:?set DEEPDOC_LLM_BASE_URL}
+      DEEPDOC_LLM_API_KEY: ${DEEPDOC_LLM_API_KEY:?set DEEPDOC_LLM_API_KEY}
+      DEEPDOC_EMBEDDING_PROVIDER: openai-compatible
+      DEEPDOC_EMBEDDING_MODEL: ${DEEPDOC_EMBEDDING_MODEL:?set DEEPDOC_EMBEDDING_MODEL}
+      DEEPDOC_EMBEDDING_BASE_URL: ${DEEPDOC_EMBEDDING_BASE_URL:?set DEEPDOC_EMBEDDING_BASE_URL}
+      DEEPDOC_EMBEDDING_API_KEY: ${DEEPDOC_EMBEDDING_API_KEY:?set DEEPDOC_EMBEDDING_API_KEY}
+      DEEPDOC_OTEL_EXPORTER_OTLP_ENDPOINT: ${DEEPDOC_OTEL_EXPORTER_OTLP_ENDPOINT:?set DEEPDOC_OTEL_EXPORTER_OTLP_ENDPOINT}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment: *production-env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *production-env
+      DEEPDOC_WORKER_KINDS: document.process,knowledge_base.reindex,agent.execute,evaluation.execute
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  deepdoc-postgres:
+  deepdoc-objects:

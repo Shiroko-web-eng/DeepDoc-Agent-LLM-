@@ -15,16 +15,18 @@ from app.generation import LLMClient
 from app.ingestion import chunk_pages, detect_media_type, parse_document
 from app.repository import Repository
 from app.retrieval import HybridRetriever, RewrittenQuery
+from app.storage import ObjectStorage
 
 logger = logging.getLogger(__name__)
 
 
 class DocumentService:
     def __init__(self, settings: Settings, repository: Repository,
-                 embedder: EmbeddingProvider):
+                 embedder: EmbeddingProvider, storage: ObjectStorage):
         self.settings = settings
         self.repository = repository
         self.embedder = embedder
+        self.storage = storage
 
     def accept(self, filename: str, content: bytes,
                knowledge_base_id: str = "default") -> tuple[dict[str, Any], bool]:
@@ -36,7 +38,7 @@ class DocumentService:
         digest = hashlib.sha256(content).hexdigest()
         doc_id = str(uuid.uuid4())
         suffix = Path(filename).suffix.lower()
-        storage_path = self.settings.upload_dir / f"{doc_id}{suffix}"
+        storage_path = self.storage.locator(f"documents/{doc_id}{suffix}")
         document = self.repository.create_document(
             doc_id=doc_id,
             filename=Path(filename).name,
@@ -48,7 +50,7 @@ class DocumentService:
         )
         created = document["id"] == doc_id
         if created:
-            storage_path.write_bytes(content)
+            self.storage.write(storage_path, content)
         return document, created
 
     def process(self, doc_id: str, force: bool = False) -> None:
@@ -57,7 +59,7 @@ class DocumentService:
             return
         self.repository.set_document_status(doc_id, "PARSING")
         try:
-            content = Path(document["storage_path"]).read_bytes()
+            content = self.storage.read(document["storage_path"])
             pages = parse_document(document["media_type"], content)
             chunks = chunk_pages(doc_id, pages)
             self.repository.replace_content(doc_id, pages, chunks)
@@ -80,6 +82,8 @@ class DocumentService:
                 self.process(document["id"])
 
     def reindex(self, job_id: str, knowledge_base_id: str) -> None:
+        if self.repository.get_index_job(job_id)["status"] == "ACTIVE":
+            return
         self.repository.set_index_job(job_id, "BUILDING")
         try:
             chunks = self.repository.get_knowledge_base_chunks(knowledge_base_id)
@@ -98,9 +102,8 @@ class DocumentService:
     def delete(self, doc_id: str) -> None:
         document = self.repository.get_document(doc_id)
         self.repository.set_document_status(doc_id, "DELETING")
-        storage_path = Path(document["storage_path"])
         self.repository.delete_document(doc_id)
-        storage_path.unlink(missing_ok=True)
+        self.storage.delete(document["storage_path"])
 
 
 class QAService:
@@ -146,12 +149,24 @@ class QAService:
             }
             if not set(document_ids) <= allowed:
                 raise AppError("DOCUMENT_NOT_IN_KNOWLEDGE_BASE", "文档不属于该知识库", 400)
-        chunks = self.repository.get_knowledge_base_chunks(knowledge_base_id, document_ids)
+        query_vector = None
+        if self.repository.database.is_postgres:
+            query_vector = self.retriever.embedder.embed_query(question)
+            chunks = self.repository.get_postgres_hybrid_candidates(
+                knowledge_base_id, query_vector, question,
+                self.retriever.dense_top_k, self.retriever.sparse_top_k,
+                document_ids,
+            )
+        else:
+            chunks = self.repository.get_knowledge_base_chunks(
+                knowledge_base_id, document_ids
+            )
         rewritten, evidence = self.retriever.search(
             question,
             chunks,
             limit=limit or self.settings.final_context_chunks,
             max_chars=self.settings.max_context_chars,
+            query_vector=query_vector,
         )
         return rewritten, evidence, int(knowledge_base["active_index_version"])
 

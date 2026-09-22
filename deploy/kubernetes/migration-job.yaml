@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: deepdoc-migrate
+  namespace: deepdoc
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: deepdoc
+      containers:
+        - name: migrate
+          image: ghcr.io/your-org/deepdoc-agent@sha256:replace-with-release-digest
+          args: ["python", "-m", "app.migrate"]
+          envFrom:
+            - configMapRef: {name: deepdoc-config}
+            - secretRef: {name: deepdoc-secrets}
+          securityContext: &securityContext
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}

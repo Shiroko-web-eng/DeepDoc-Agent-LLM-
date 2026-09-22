@@ -5,8 +5,9 @@ import logging
 import sqlite3
 import time
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import closing, contextmanager
 from typing import Any
+from urllib.parse import quote
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -21,6 +22,7 @@ from app.errors import AppError
 from app.generation import LLMClient
 from app.repository import Repository
 from app.services import QAService
+from app.tenant import current_principal
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,11 @@ class AgentService:
 
     def execute(self, run_id: str, resume: bool = False) -> None:
         run = self.agent_repository.get_run(run_id)
+        if run["status"] in {
+            "COMPLETED", "PARTIAL", "INSUFFICIENT", "REFUSED", "CANCELLED",
+            "BUDGET_EXCEEDED",
+        }:
+            return
         if run["execution_mode"] == "multi":
             self._execute_multi(run, resume)
             return
@@ -102,7 +109,9 @@ class AgentService:
         last_version = -1
         final_state: AgentState = initial
         try:
-            config = {"configurable": {"thread_id": run_id}}
+            config = {"configurable": {
+                "thread_id": self._checkpoint_thread_id(run_id),
+            }}
             for state in self.graph.compiled.stream(
                 initial, config=config, stream_mode="values"
             ):
@@ -146,19 +155,15 @@ class AgentService:
             "phase": "queued", "usage": {}, "error_code": None,
         }
         self.agent_repository.append_event(run_id, "run.started", {"resume": resume})
-        checkpoint_path = self.settings.database_path.with_name(
-            self.settings.database_path.stem + "-langgraph.sqlite"
-        )
         previous_version = int(run["state_version"])
         last_state = initial
         emitted_tasks: set[str] = set()
         try:
-            with closing(sqlite3.connect(checkpoint_path, check_same_thread=False)) as conn:
-                saver = SqliteSaver(
-                    conn, serde=JsonPlusSerializer(allowed_msgpack_modules=[])
-                )
+            with self._multi_checkpointer() as saver:
                 graph = self.multi_graph.builder.compile(checkpointer=saver)
-                config = {"configurable": {"thread_id": run_id},
+                config = {"configurable": {
+                              "thread_id": self._checkpoint_thread_id(run_id),
+                          },
                           "max_concurrency": run["budget"]["max_parallel_agents"],
                           "recursion_limit": 20}
                 graph_input = initial
@@ -170,7 +175,9 @@ class AgentService:
                         # A completed graph must start on a fresh thread: the
                         # results reducer would otherwise retain the old run.
                         config["configurable"]["thread_id"] = (
-                            f"{run_id}-resume-{previous_version}"
+                            self._checkpoint_thread_id(
+                                f"{run_id}-resume-{previous_version}"
+                            )
                         )
                 for state in graph.stream(graph_input, config=config, stream_mode="values",
                                           durability="sync"):
@@ -227,6 +234,39 @@ class AgentService:
             self.agent_repository.append_event(
                 run_id, "run.failed", {"code": "MULTI_AGENT_FAILED"}
             )
+
+    @contextmanager
+    def _multi_checkpointer(self):
+        if self.settings.database_url:
+            try:
+                from langgraph.checkpoint.postgres import PostgresSaver
+            except ImportError as exc:
+                raise RuntimeError(
+                    "install the production extra to use PostgreSQL checkpoints"
+                ) from exc
+            connection_string = self.settings.database_url.replace(
+                "postgresql+psycopg://", "postgresql://"
+            )
+            separator = "&" if "?" in connection_string else "?"
+            tenant = quote(current_principal().tenant_id, safe="")
+            connection_string += (
+                f"{separator}options=-c%20app.tenant_id%3D{tenant}"
+            )
+            with PostgresSaver.from_conn_string(connection_string) as saver:
+                yield saver
+            return
+        checkpoint_path = self.settings.database_path.with_name(
+            self.settings.database_path.stem + "-langgraph.sqlite"
+        )
+        with closing(sqlite3.connect(checkpoint_path, check_same_thread=False)) as conn:
+            yield SqliteSaver(
+                conn, serde=JsonPlusSerializer(allowed_msgpack_modules=[])
+            )
+
+    def _checkpoint_thread_id(self, run_id: str) -> str:
+        if not self.settings.database_url:
+            return run_id
+        return f"{current_principal().tenant_id}:{run_id}"
 
     def _initial_state(self, run: dict[str, Any]) -> AgentState:
         return {

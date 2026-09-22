@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepdoc-api
+  namespace: deepdoc
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app: deepdoc-api}
+  template:
+    metadata:
+      labels: {app: deepdoc-api}
+    spec:
+      serviceAccountName: deepdoc
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: {matchLabels: {app: deepdoc-api}}
+      containers:
+        - name: api
+          image: ghcr.io/your-org/deepdoc-agent@sha256:replace-with-release-digest
+          ports: [{name: http, containerPort: 8000}]
+          envFrom:
+            - configMapRef: {name: deepdoc-config}
+            - secretRef: {name: deepdoc-secrets}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          startupProbe: &probe
+            httpGet: {path: /health/startup, port: http}
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet: {path: /health/ready, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /health/live, port: http}
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {sizeLimit: 256Mi}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deepdoc-api
+  namespace: deepdoc
+spec:
+  selector: {app: deepdoc-api}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: deepdoc-api
+  namespace: deepdoc
+spec:
+  minAvailable: 2
+  selector: {matchLabels: {app: deepdoc-api}}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: deepdoc-api
+  namespace: deepdoc
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: deepdoc-api}
+  minReplicas: 3
+  maxReplicas: 20
+  behavior:
+    scaleDown: {stabilizationWindowSeconds: 300}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 60}

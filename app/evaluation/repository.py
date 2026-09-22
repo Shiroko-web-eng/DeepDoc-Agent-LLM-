@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from typing import Any
 
@@ -33,7 +32,9 @@ class EvalRepository:
                     (dataset_id, name, version, split, description, content_sha256,
                      encode(corpus_snapshot), encode(cases), now),
                 )
-        except sqlite3.IntegrityError as exc:
+        except Exception as exc:
+            if not self.database.is_integrity_error(exc):
+                raise
             raise AppError("DATASET_VERSION_EXISTS", "数据集版本已存在", 409) from exc
         return self.get_dataset(dataset_id)
 

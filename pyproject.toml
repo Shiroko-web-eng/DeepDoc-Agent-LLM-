@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepdoc-agent"
-version = "0.5.0"
-description = "Citation-first document research with versioned offline evaluation"
+version = "1.0.0"
+description = "Production-ready, citation-first multi-agent document research"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",
@@ -18,7 +18,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10"]
+dev = ["pytest>=8,<10", "pyyaml>=6,<7"]
+production = [
+  "psycopg[binary]>=3.2,<4",
+  "langgraph-checkpoint-postgres>=3.0,<4",
+  "boto3>=1.40,<2",
+  "PyJWT[crypto]>=2.10,<3",
+  "opentelemetry-sdk>=1.38,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.38,<2",
+  "opentelemetry-instrumentation-fastapi>=0.59b0,<1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -26,3 +35,6 @@ addopts = "-q"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["migrations/*.sql"]

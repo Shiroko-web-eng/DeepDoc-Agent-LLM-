@@ -62,7 +62,7 @@ class AgentRepository:
                 """UPDATE agent_runs SET status = ?, task_type = ?, answer = ?,
                 citations_json = ?, plan_json = ?, evidence_json = ?, budget_json = ?,
                 usage_json = ?, error_code = ?, current_node = ?, state_version = ?,
-                updated_at = ?, completed_at = CASE WHEN ? THEN ? ELSE completed_at END
+                updated_at = ?, completed_at = CASE WHEN ? = 1 THEN ? ELSE completed_at END
                 WHERE id = ?""",
                 (
                     state.get("status", "RUNNING"), state.get("task_type", ""),
@@ -82,9 +82,12 @@ class AgentRepository:
             return
         with self.database.connect() as db:
             db.execute(
-                """INSERT OR REPLACE INTO agent_checkpoints
+                """INSERT INTO agent_checkpoints
                 (run_id, state_version, node, state_json, created_at)
-                VALUES (?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, state_version) DO UPDATE SET
+                node = excluded.node, state_json = excluded.state_json,
+                created_at = excluded.created_at""",
                 (run_id, version, state.get("current_node", ""),
                  json.dumps(state, ensure_ascii=False), utc_now()),
             )

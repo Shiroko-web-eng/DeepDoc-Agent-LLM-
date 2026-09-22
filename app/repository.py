@@ -15,7 +15,7 @@ class Repository:
         self.database = database
 
     def create_document(self, *, doc_id: str, filename: str, media_type: str, sha256: str,
-                        size_bytes: int, storage_path: Path,
+                        size_bytes: int, storage_path: Path | str,
                         knowledge_base_id: str = "default") -> dict[str, Any]:
         self.get_knowledge_base(knowledge_base_id)
         now = utc_now()
@@ -34,8 +34,9 @@ class Repository:
                     db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
                 )
             db.execute(
-                """INSERT OR IGNORE INTO knowledge_base_documents
-                (knowledge_base_id, document_id, created_at) VALUES (?, ?, ?)""",
+                """INSERT INTO knowledge_base_documents
+                (knowledge_base_id, document_id, created_at) VALUES (?, ?, ?)
+                ON CONFLICT(knowledge_base_id, document_id) DO NOTHING""",
                 (knowledge_base_id, document["id"], now),
             )
             return document
@@ -172,10 +173,32 @@ class Repository:
         if len(chunks) != len(vectors):
             raise ValueError("chunk and embedding counts do not match")
         with self.database.connect() as db:
+            if self.database.is_postgres:
+                db.executemany(
+                    """INSERT INTO chunk_embeddings
+                    (chunk_id, model, dimensions, vector_json, embedding,
+                     content_sha256, created_at)
+                    VALUES (?, ?, ?, ?, ?::vector, ?, ?)
+                    ON CONFLICT(chunk_id) DO UPDATE SET model = excluded.model,
+                    dimensions = excluded.dimensions, vector_json = excluded.vector_json,
+                    embedding = excluded.embedding,
+                    content_sha256 = excluded.content_sha256,
+                    created_at = excluded.created_at""",
+                    [(
+                        chunk["id"], model, len(vector), json.dumps(vector),
+                        json.dumps(vector),
+                        hashlib.sha256(chunk["text"].encode("utf-8")).hexdigest(),
+                        utc_now(),
+                    ) for chunk, vector in zip(chunks, vectors, strict=True)],
+                )
+                return
             db.executemany(
-                """INSERT OR REPLACE INTO chunk_embeddings
+                """INSERT INTO chunk_embeddings
                 (chunk_id, model, dimensions, vector_json, content_sha256, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chunk_id) DO UPDATE SET model = excluded.model,
+                dimensions = excluded.dimensions, vector_json = excluded.vector_json,
+                content_sha256 = excluded.content_sha256, created_at = excluded.created_at""",
                 [(
                     chunk["id"], model, len(vector), json.dumps(vector),
                     hashlib.sha256(chunk["text"].encode("utf-8")).hexdigest(), utc_now(),
@@ -213,6 +236,58 @@ class Repository:
                 {document_filter}
                 ORDER BY d.created_at, c.ordinal""",
                 parameters,
+            ).fetchall()
+        return [self._decode_chunk(row) for row in rows]
+
+    def get_postgres_hybrid_candidates(
+        self, knowledge_base_id: str, query_vector: list[float], lexical_query: str,
+        dense_limit: int, sparse_limit: int,
+        document_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if not self.database.is_postgres:
+            return self.get_knowledge_base_chunks(knowledge_base_id, document_ids)
+        vector_text = json.dumps(query_vector)
+        dense_filter = ""
+        sparse_filter = ""
+        dense_documents: list[Any] = []
+        sparse_documents: list[Any] = []
+        if document_ids:
+            placeholders = ",".join("?" for _ in document_ids)
+            dense_filter = f" AND c.document_id IN ({placeholders})"
+            sparse_filter = f" AND c.document_id IN ({placeholders})"
+            dense_documents = list(document_ids)
+            sparse_documents = list(document_ids)
+        with self.database.connect() as db:
+            rows = db.execute(
+                f"""WITH dense AS (
+                    SELECT c.id FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    JOIN knowledge_base_documents kbd ON kbd.document_id = d.id
+                    JOIN chunk_embeddings ce ON ce.chunk_id = c.id
+                    WHERE kbd.knowledge_base_id = ? AND d.status = 'READY'
+                    AND ce.embedding IS NOT NULL {dense_filter}
+                    ORDER BY ce.embedding <=> ?::vector LIMIT ?
+                ), sparse AS (
+                    SELECT c.id FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    JOIN knowledge_base_documents kbd ON kbd.document_id = d.id
+                    WHERE kbd.knowledge_base_id = ? AND d.status = 'READY'
+                    AND to_tsvector('simple', c.text) @@ plainto_tsquery('simple', ?)
+                    {sparse_filter}
+                    ORDER BY ts_rank_cd(to_tsvector('simple', c.text),
+                                        plainto_tsquery('simple', ?)) DESC
+                    LIMIT ?
+                ), candidates AS (
+                    SELECT id FROM dense UNION SELECT id FROM sparse
+                )
+                SELECT c.*, d.filename, ce.vector_json
+                FROM chunks c JOIN candidates x ON x.id = c.id
+                JOIN documents d ON d.id = c.document_id
+                LEFT JOIN chunk_embeddings ce ON ce.chunk_id = c.id
+                ORDER BY d.created_at, c.ordinal""",
+                [knowledge_base_id, vector_text] + dense_documents
+                + [dense_limit, knowledge_base_id, lexical_query]
+                + sparse_documents + [lexical_query, sparse_limit],
             ).fetchall()
         return [self._decode_chunk(row) for row in rows]
 

@@ -1,11 +1,20 @@
 # DeepDoc Agent
 
-DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档研究系统。0.5.0 版本增加本地离线 Eval：不可变数据集版本、RAG/单 Agent/Multi-Agent 运行、规则指标、配对比较与门禁。此前的 Multi-Agent 研究图继续保留。
+DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档研究系统。1.0.0 增加 Production 运行基线：PostgreSQL/pgvector、S3 对象存储、OIDC 租户身份、RLS、数据库持久任务、独立 Worker、OpenTelemetry 接入、Kubernetes 扩缩容和供应链工作流。开发模式仍可零外部依赖运行。
 
-默认开发模式不依赖外部模型或向量服务：元数据、Agent Checkpoint 和向量写入 SQLite，Multi-Agent LangGraph 检查点另存于同目录的 `*-langgraph.sqlite` 文件。Embedding 使用可复现的 Hashing Provider，规划、分析和核验采用确定性策略，回答使用抽取式模型。因此项目可直接在本地和 CI 中运行。检索、规划、工具和模型均通过独立边界接入，后续可替换为 PostgreSQL、Qdrant、Redis、生产模型和外部工具。
+默认开发模式不依赖外部模型或向量服务：元数据、Agent Checkpoint 和向量写入 SQLite，Multi-Agent LangGraph 检查点另存于同目录的 `*-langgraph.sqlite` 文件。Embedding 使用可复现的 Hashing Provider，规划、分析和核验采用确定性策略，回答使用抽取式模型。因此项目可直接在本地和 CI 中运行。Production 模式则切换到 PostgreSQL/pgvector、S3、OIDC、外部模型和独立 Worker；各边界仍可继续替换为 Qdrant、Redis 或托管消息系统。
 
 ## 功能
 
+- `embedded|durable` 两种任务模式；生产 API 只入队，摄取、Agent 和 Eval 由带租约、重试和死信状态的 Worker 执行。
+- 创建知识库、重建索引、Agent Run 和 Eval Run 支持 `Idempotency-Key`；生产环境强制提供，重复请求返回首次资源且请求体变化返回 409。
+- PostgreSQL 生产 Schema、pgvector 扩展、租户列与强制 RLS；SQLite 继续作为本地开发适配器。
+- 开发使用确定性 Hashing Embedding；生产强制配置 OpenAI-compatible Embedding，并把 256 维向量写入带 HNSW 索引的 pgvector 列。
+- 本地/S3 对象存储适配器，OIDC JWT 验证与 Tenant Context，评测管理权限支持 `admin|eval-admin` 角色。
+- PostgreSQL LangGraph Checkpointer、SSE 持久事件续传和幂等终态保护。
+- OpenTelemetry OTLP Trace 接入点和 Live/Ready/Startup 三类探针。
+- Docker Compose 生产拓扑与 Kubernetes API、Worker、隔离 Eval Worker、PDB、HPA、KEDA、NetworkPolicy 清单。
+- CI 测试/文档/镜像构建，以及带 SBOM 与 Build Provenance 的发布工作流。
 - 版本化 Eval 数据集与知识库索引/文档/Chunk 哈希快照；快照变化时拒绝复用旧基准。
 - RAG、单 Agent、Multi-Agent 三路径离线评测；原始运行 Artifact、错误与案例指标持久化。
 - Recall@5、MRR@5、nDCG@5、引用有效性、Gold 引用覆盖、字面 Claim 覆盖、拒答、路由和规则任务成功率。
@@ -34,9 +43,9 @@ DeepDoc Agent 是一个引用优先、具有显式预算和终止条件的文档
 
 当前 Web Search 工具已注册但默认不可用；在配置受控 Provider、域名策略和 SSRF 防护前，Agent 不会执行外部网页检索。
 
-当前 Eval 的 Claim 覆盖只做字面匹配，不等同语义正确性或 Faithfulness。固定 LLM Judge、人工裁决、真实费用价格表、独立 Worker 和 CI 发布门禁尚未接入；这些字段不会伪装为已通过。评测用 SQLite 与 FastAPI 后台任务适合本地开发，不能作为多用户生产 Eval 服务。
+当前 Eval 的 Claim 覆盖只做字面匹配，不等同语义正确性或 Faithfulness。固定 LLM Judge、人工裁决和真实费用价格表仍未接入；这些字段不会伪装为已通过。Production 模式会使用独立 Eval Worker，但正式发布仍需按设计方案完成 Holdout、语义 Judge 与人工校准。
 
-本地 Multi-Agent 版本仍由 FastAPI 后台任务执行；持久图检查点不等于独立 Worker 队列。进程意外退出后，目前不自动领取并继续未完成 Run。生产部署前须按 [Multi-Agent 设计方案](docs/multi-agent-design.md) 补齐独立 Worker、任务租约、Outbox、跨进程幂等和 PostgreSQL Checkpointer。当前 Verifier 是确定性原文匹配，不是语义事实核验模型；Benchmark 目标尚未达成。
+开发默认仍由 FastAPI 后台任务执行；设置 `DEEPDOC_TASK_MODE=durable` 后，任务和领域对象在同一数据库事务中提交，再由独立 Worker 领取。当前 Verifier 是确定性原文匹配，不是语义事实核验模型；生产质量门禁目标仍须用真实模型和授权数据校准。
 
 ## 本地运行
 
@@ -272,7 +281,7 @@ DEEPDOC_LLM_BASE_URL=https://provider.example/v1
 DEEPDOC_LLM_API_KEY=...
 ```
 
-当前 Hashing Embedding、确定性 Planner/Evaluator/Verifier 和抽取式生成器用于开发、测试和工作流验证，不等同于生产级模型。上线前应依据 [Agent 设计方案](docs/agent-design.md) 与 [Multi-Agent 设计方案](docs/multi-agent-design.md) 接入生产模型、独立 Worker 队列、PostgreSQL/Qdrant/Redis 和受控 Web Search Provider。
+当前 Hashing Embedding、确定性 Planner/Evaluator/Verifier 和抽取式生成器仅用于开发、测试和工作流验证，不等同于生产级模型。Production 配置会强制使用外部 LLM 与 Embedding，并启用 PostgreSQL、S3、OIDC 和独立 Worker；受控 Web Search Provider、Redis 缓存/限流、语义核验模型和托管队列仍属于按业务规模选配的外部集成。
 
 ## Docker
 
@@ -281,6 +290,33 @@ docker compose up --build
 ```
 
 数据保存在 `deepdoc-data` Volume。
+
+## Production 运行基线
+
+安装生产依赖：
+
+```powershell
+pip install -e ".[production]"
+```
+
+本地验证生产拓扑可使用 [compose.production.yaml](compose.production.yaml)。它启动 PostgreSQL/pgvector、MinIO、一次性迁移、API 和独立 Worker；必须先配置 `.env` 中的数据库密码、MinIO、OIDC、模型和 OTLP 地址：
+
+```powershell
+docker compose -f compose.production.yaml config
+docker compose -f compose.production.yaml up --build
+```
+
+生产配置采用 fail-closed：`DEEPDOC_ENV=production` 时若未配置 PostgreSQL URL、`durable` 任务模式、S3 Bucket、OIDC issuer/audience/JWKS、外部模型或 OTLP Endpoint，进程拒绝启动。API 启动时不自动迁移，部署前单独运行：
+
+```powershell
+python -m app.migrate
+python -m app.worker
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Kubernetes 清单和上线前要求位于 [deploy/kubernetes](deploy/kubernetes/README.md)。清单中的镜像必须替换成 CI 产生的不可变 digest，Secret 不得提交到仓库。迁移 Job、API、常规 Worker 和 Eval Worker 使用独立工作负载；API 至少三副本，Worker 由数据库队列深度通过 KEDA 扩缩容。
+
+这一版本提供可运行的 Production 基线，不代表无需环境验收即可上线。正式接收流量前仍需完成真实 PostgreSQL/S3/OIDC/OTel 集成测试、外部模型 Eval、负载测试、NetworkPolicy 出口白名单、备份恢复与 RPO/RTO 演练。当前数据库队列适合中等规模；如果队列吞吐或隔离需求超过基线，应通过 ADR 迁移到托管消息系统，同时保留相同的任务幂等与租约语义。
 
 ## 测试
 
